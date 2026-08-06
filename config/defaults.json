@@ -1,0 +1,12 @@
+{
+  "language": "ES",
+  "transcription_engine": "WHISPER.CPP",
+  "file_profile": "BALANCEADO",
+  "live_profile": "BALANCEADO",
+  "uppercase": true,
+  "first_speaker_agent": true,
+  "show_timestamps": true,
+  "speaker_one_label": "AGENTE",
+  "speaker_two_label": "CLIENTE",
+  "diarization_enabled": true
+}

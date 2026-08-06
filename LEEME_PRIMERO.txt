@@ -1,0 +1,12 @@
+AUDITOR IA V4.7.5.2 — HABLANTES RESTAURADOS
+
+Después de transcribir un archivo mono, la aplicación intenta identificar
+automáticamente las intervenciones de AGENTE y CLIENTE.
+
+La opción de identificación debe estar activada en CONFIGURACIÓN.
+
+Si una línea queda mal identificada:
+1. Haz clic en la línea o selecciónala.
+2. Presiona MARCAR COMO AGENTE o MARCAR COMO CLIENTE.
+
+Si la identificación automática falla, la transcripción se conserva.
