@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from app.models.settings import AppSettings
 from app.services.config_service import ConfigService
+from app.services.paths_service import AppPaths
 from app.ui.pages.common import create_page_header
 
 
@@ -51,14 +52,23 @@ class SettingsPage(QFrame):
         recommendation_title.setObjectName("Recommendation")
 
         recommendation_text = QLabel(
-            "UN SOLO MOTOR: FASTER-WHISPER. "
-            "RÁPIDO USA BASE, BALANCEADO USA SMALL "
-            "Y PRECISO USA MEDIUM."
+            "LOS MODELOS BASE Y SMALL VIENEN INCLUIDOS. "
+            "NO SE DESCARGAN DURANTE EL USO."
         )
         recommendation_text.setWordWrap(True)
         recommendation_text.setObjectName("Muted")
         recommendation_layout.addWidget(recommendation_title)
         recommendation_layout.addWidget(recommendation_text)
+
+        self.model_status = QLabel()
+        self.model_status.setWordWrap(True)
+        self.model_status.setObjectName("Recommendation")
+
+        verify_button = QPushButton("VERIFICAR MODELOS INSTALADOS")
+        verify_button.clicked.connect(self._refresh_model_status)
+
+        recommendation_layout.addWidget(self.model_status)
+        recommendation_layout.addWidget(verify_button)
 
         card = QFrame()
         card.setObjectName("Card")
@@ -75,7 +85,7 @@ class SettingsPage(QFrame):
         self.engine.setEnabled(False)
 
         self.profile = QComboBox()
-        self.profile.addItems(["RÁPIDO", "BALANCEADO", "PRECISO"])
+        self.profile.addItems(["RÁPIDO", "BALANCEADO"])
 
         self.uppercase = QCheckBox(
             "TRANSCRIBIR SIEMPRE EN MAYÚSCULAS"
@@ -134,6 +144,7 @@ class SettingsPage(QFrame):
         self.speaker_one.setText(self._settings.speaker_one_label)
         self.speaker_two.setText(self._settings.speaker_two_label)
         self._update_note()
+        self._refresh_model_status()
 
     def _update_note(self) -> None:
         notes = {
@@ -143,12 +154,34 @@ class SettingsPage(QFrame):
             "BALANCEADO": (
                 "MODELO SMALL: RECOMENDADO PARA ARCHIVOS Y EQUIPOS DE 8 GB."
             ),
-            "PRECISO": (
-                "MODELO MEDIUM: MAYOR FIDELIDAD. "
-                "RECOMENDADO CON 16 GB DE RAM O MÁS."
-            ),
         }
         self.note.setText(notes[self.profile.currentText()])
+
+    def _refresh_model_status(self) -> None:
+        paths = AppPaths()
+        required = (
+            "model.bin",
+            "config.json",
+            "tokenizer.json",
+        )
+
+        states = []
+
+        for label, folder in (
+            ("BASE / RÁPIDO", paths.models / "base"),
+            ("SMALL / BALANCEADO", paths.models / "small"),
+        ):
+            ready = all(
+                (folder / filename).is_file()
+                and (folder / filename).stat().st_size > 0
+                for filename in required
+            )
+            state = "LISTO" if ready else "NO DISPONIBLE"
+            states.append(f"{label}: {state}")
+
+        self.model_status.setText(
+            "MODELOS INSTALADOS — " + " · ".join(states)
+        )
 
     def _save(self) -> None:
         label_one = self.speaker_one.text().strip()

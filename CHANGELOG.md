@@ -1,3 +1,13 @@
+# V6.0.1 — Modelos incluidos y verificados
+
+- Modelos Base y Small incluidos en Setup y Portable.
+- No se descargan modelos al comenzar una transcripción.
+- Verificación visible en Configuración.
+- La transcripción se bloquea con un mensaje claro si un modelo está incompleto.
+- Faster-Whisper usa rutas locales y `local_files_only=True`.
+- Eliminado el estado falso `is_ready=True`.
+- Release preparado como `v6.0.1`.
+
 # V6.0 — Consolidada
 
 - Un único motor: Faster-Whisper.

@@ -365,6 +365,22 @@ class FilesPage(QFrame):
             return
 
         settings = self._config_service.load()
+        self._engine.set_profile(settings.file_profile)
+
+        if not self._engine.is_ready():
+            self._state_label.setText(
+                "ESTADO: MODELO NO DISPONIBLE"
+            )
+            QMessageBox.critical(
+                self,
+                "MODELO NO DISPONIBLE",
+                "EL MODELO NECESARIO NO ESTÁ INSTALADO "
+                "O ESTÁ INCOMPLETO.\n\n"
+                f"PERFIL: {settings.file_profile}\n"
+                f"MODELO: {self._engine.model_name.upper()}\n\n"
+                "REINSTALA AUDITOR IA 6.0.1.",
+            )
+            return
         self._history_id = None
         self._editor.clear()
 

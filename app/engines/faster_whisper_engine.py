@@ -5,28 +5,38 @@ from pathlib import Path
 
 from faster_whisper import WhisperModel
 
-from app.engines.base_speech_engine import ProgressCallback, SpeechEngine
+from app.engines.base_speech_engine import (
+    ProgressCallback,
+    SpeechEngine,
+)
 from app.models.conversation import Conversation, Segment
 from app.services.paths_service import AppPaths
 
 
 class FasterWhisperEngine(SpeechEngine):
-    """Motor local para archivos y transcripción en vivo."""
+    """Motor local con modelos verificados dentro de la aplicación."""
 
     MODEL_MAP = {
         "RÁPIDO": "base",
         "BALANCEADO": "small",
-        "PRECISO": "medium",
     }
 
+    REQUIRED_MODEL_FILES = (
+        "model.bin",
+        "config.json",
+        "tokenizer.json",
+    )
+
     def __init__(self, profile: str = "BALANCEADO") -> None:
+        self._paths = AppPaths()
         self._profile = (
-            profile if profile in self.MODEL_MAP else "BALANCEADO"
+            profile
+            if profile in self.MODEL_MAP
+            else "BALANCEADO"
         )
         self._model_name = self.MODEL_MAP[self._profile]
         self._model: WhisperModel | None = None
         self._model_lock = threading.RLock()
-        self._paths = AppPaths()
         self._logger = logging.getLogger(__name__)
 
     @property
@@ -37,12 +47,53 @@ class FasterWhisperEngine(SpeechEngine):
     def profile(self) -> str:
         return self._profile
 
+    @property
+    def model_path(self) -> Path:
+        return self._paths.models / self._model_name
+
+    def model_status(self) -> dict[str, bool]:
+        return {
+            profile: self._model_files_ready(
+                self._paths.models / model_name
+            )
+            for profile, model_name in self.MODEL_MAP.items()
+        }
+
     def is_ready(self) -> bool:
-        return True
+        return self._model_files_ready(self.model_path)
+
+    def readiness_message(self) -> str:
+        status = self.model_status()
+        ready = [
+            profile
+            for profile, available in status.items()
+            if available
+        ]
+        missing = [
+            profile
+            for profile, available in status.items()
+            if not available
+        ]
+
+        parts = []
+
+        if ready:
+            parts.append(
+                "LISTOS: " + ", ".join(ready)
+            )
+
+        if missing:
+            parts.append(
+                "NO DISPONIBLES: " + ", ".join(missing)
+            )
+
+        return " · ".join(parts) or "SIN MODELOS"
 
     def set_profile(self, profile: str) -> None:
         normalized = (
-            profile if profile in self.MODEL_MAP else "BALANCEADO"
+            profile
+            if profile in self.MODEL_MAP
+            else "BALANCEADO"
         )
         new_name = self.MODEL_MAP[normalized]
 
@@ -52,6 +103,13 @@ class FasterWhisperEngine(SpeechEngine):
         self._profile = normalized
         self._model_name = new_name
 
+    def _model_files_ready(self, path: Path) -> bool:
+        return all(
+            (path / filename).is_file()
+            and (path / filename).stat().st_size > 0
+            for filename in self.REQUIRED_MODEL_FILES
+        )
+
     def _load_model(
         self,
         callback: ProgressCallback | None,
@@ -60,31 +118,49 @@ class FasterWhisperEngine(SpeechEngine):
             if self._model is not None:
                 return self._model
 
+            if not self.is_ready():
+                message = (
+                    f"EL MODELO {self._model_name.upper()} "
+                    "NO ESTÁ INSTALADO O ESTÁ INCOMPLETO. "
+                    "REINSTALA AUDITOR IA 6.0.1."
+                )
+                self._logger.error(message)
+                raise RuntimeError(message)
+
             if callback:
                 callback(
                     3,
-                    f"CARGANDO MODELO {self._model_name.upper()}...",
+                    f"VERIFICANDO MODELO "
+                    f"{self._model_name.upper()}...",
                 )
 
-            available = max(
-                1,
-                os.cpu_count() or 2,
-            )
+            available = max(1, os.cpu_count() or 2)
             threads = max(
                 1,
-                min(
-                    6,
-                    available - 1,
-                ),
+                min(6, available - 1),
             )
 
+            if callback:
+                callback(
+                    5,
+                    f"INICIANDO MODELO "
+                    f"{self._model_name.upper()}...",
+                )
+
             self._model = WhisperModel(
-                self._model_name,
+                str(self.model_path),
                 device="cpu",
                 compute_type="int8",
                 cpu_threads=threads,
                 num_workers=1,
+                local_files_only=True,
             )
+
+            if callback:
+                callback(
+                    7,
+                    f"MODELO {self._model_name.upper()} LISTO",
+                )
 
             return self._model
 
@@ -107,9 +183,11 @@ class FasterWhisperEngine(SpeechEngine):
             progress_callback(8, "ANALIZANDO AUDIO...")
 
         language_code = (
-            None if language == "AUTO" else language.lower()
+            None
+            if language == "AUTO"
+            else language.lower()
         )
-        beam_size = 7 if self._model_name == "medium" else 5
+        beam_size = 5
 
         segments_iter, info = model.transcribe(
             str(audio_path),
@@ -137,6 +215,7 @@ class FasterWhisperEngine(SpeechEngine):
 
         for item in segments_iter:
             text = item.text.strip()
+
             if not text:
                 continue
 
@@ -158,17 +237,28 @@ class FasterWhisperEngine(SpeechEngine):
             )
 
             if progress_callback and duration > 0:
-                ratio = min(float(item.end) / duration, 1.0)
+                ratio = min(
+                    float(item.end) / duration,
+                    1.0,
+                )
                 progress_callback(
                     10 + int(ratio * 79),
-                    f"TRANSCRIBIENDO... {int(ratio * 100)} %",
+                    f"TRANSCRIBIENDO... "
+                    f"{int(ratio * 100)} %",
                 )
 
         if progress_callback:
-            progress_callback(90, "TRANSCRIPCIÓN FINALIZADA")
+            progress_callback(
+                90,
+                "TRANSCRIPCIÓN FINALIZADA",
+            )
 
         detected = str(
-            getattr(info, "language", language_code or "AUTO")
+            getattr(
+                info,
+                "language",
+                language_code or "AUTO",
+            )
         ).upper()
 
         return Conversation(
@@ -183,12 +273,6 @@ class FasterWhisperEngine(SpeechEngine):
         language: str,
         uppercase: bool,
     ) -> Conversation:
-        """
-        Transcribe una frase completa del modo En vivo.
-
-        No se utiliza initial_prompt porque, con señales débiles, Whisper podía
-        devolver parte de esas instrucciones como si fueran conversación real.
-        """
         if not audio_path.exists():
             raise FileNotFoundError(
                 "EL FRAGMENTO DE AUDIO NO EXISTE."
@@ -202,17 +286,11 @@ class FasterWhisperEngine(SpeechEngine):
             else language.lower()
         )
 
-        beam_size = (
-            5
-            if self._model_name != "medium"
-            else 7
-        )
-
         segments_iter, info = model.transcribe(
             str(audio_path),
             language=language_code,
             task="transcribe",
-            beam_size=beam_size,
+            beam_size=5,
             best_of=5,
             vad_filter=False,
             condition_on_previous_text=False,
@@ -240,14 +318,12 @@ class FasterWhisperEngine(SpeechEngine):
         segments: list[Segment] = []
 
         for item in segments_iter:
-            text = " ".join(
-                item.text.strip().split()
-            )
+            text = item.text.strip()
 
             if not text:
                 continue
 
-            lowered = text.lower()
+            lowered = text.casefold()
 
             if any(
                 fragment in lowered
@@ -287,20 +363,10 @@ class FasterWhisperEngine(SpeechEngine):
     @staticmethod
     def _format_time(seconds: float) -> str:
         total = max(0, int(seconds))
-        hours, remainder = divmod(
-            total,
-            3600,
-        )
-        minutes, secs = divmod(
-            remainder,
-            60,
-        )
+        minutes, secs = divmod(total, 60)
+        hours, minutes = divmod(minutes, 60)
 
         if hours:
-            return (
-                f"{hours:02d}:"
-                f"{minutes:02d}:"
-                f"{secs:02d}"
-            )
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
         return f"{minutes:02d}:{secs:02d}"
