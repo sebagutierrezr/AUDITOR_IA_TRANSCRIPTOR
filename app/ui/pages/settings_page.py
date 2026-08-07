@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from app.models.settings import AppSettings
 from app.services.config_service import ConfigService
 from app.services.paths_service import AppPaths
+from app.services.diarization_service import DiarizationService
 from app.ui.pages.common import create_page_header
 
 
@@ -178,6 +179,16 @@ class SettingsPage(QFrame):
             )
             state = "LISTO" if ready else "NO DISPONIBLE"
             states.append(f"{label}: {state}")
+
+        voice_ready = DiarizationService().is_ready()
+        voice_state = (
+            "LISTO"
+            if voice_ready
+            else "NO DISPONIBLE"
+        )
+        states.append(
+            f"VOCES / AGENTE-CLIENTE: {voice_state}"
+        )
 
         self.model_status.setText(
             "MODELOS INSTALADOS — " + " · ".join(states)

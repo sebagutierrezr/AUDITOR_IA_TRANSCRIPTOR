@@ -2,7 +2,7 @@
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
-title AUDITOR IA 6.0 - INSTALACION
+title AUDITOR IA 6.1.0 - INSTALACION
 
 where py >nul 2>&1
 if errorlevel 1 goto python_error
@@ -16,6 +16,13 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
+if errorlevel 1 goto error
+
+echo INSTALANDO PYTORCH PARA CPU...
+".venv\Scripts\python.exe" -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+if errorlevel 1 goto error
+
+echo INSTALANDO DEPENDENCIAS...
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto error
 

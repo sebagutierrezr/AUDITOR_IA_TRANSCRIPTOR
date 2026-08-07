@@ -25,6 +25,7 @@ from app.models.conversation import Conversation
 from app.services.config_service import ConfigService
 from app.services.export_service import ExportService
 from app.services.history_service import HistoryService
+from app.services.diarization_service import DiarizationService
 from app.services.paths_service import AppPaths
 from app.ui.pages.common import create_page_header
 from app.workers.transcription_worker import TranscriptionWorker
@@ -67,6 +68,7 @@ class FilesPage(QFrame):
         self._worker: TranscriptionWorker | None = None
         self._export_thread: QThread | None = None
         self._export_worker: ExportWorker | None = None
+        self._diarization_service = DiarizationService()
 
         page, layout = create_page_header(
             "TRANSCRIPCIÓN DE ARCHIVOS",
@@ -366,6 +368,23 @@ class FilesPage(QFrame):
 
         settings = self._config_service.load()
         self._engine.set_profile(settings.file_profile)
+
+        if (
+            settings.diarization_enabled
+            and not self._diarization_service.is_ready()
+        ):
+            self._state_label.setText(
+                "ESTADO: IDENTIFICADOR NO DISPONIBLE"
+            )
+            QMessageBox.critical(
+                self,
+                "IDENTIFICADOR DE VOCES NO DISPONIBLE",
+                "EL MODELO PROFESIONAL PARA IDENTIFICAR "
+                "AGENTE Y CLIENTE NO ESTÁ INSTALADO O ESTÁ "
+                "INCOMPLETO.\n\n"
+                "REINSTALA AUDITOR IA 6.1.0.",
+            )
+            return
 
         if not self._engine.is_ready():
             self._state_label.setText(

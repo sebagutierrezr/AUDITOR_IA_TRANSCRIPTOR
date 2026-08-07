@@ -1,14 +1,71 @@
-import re
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import wave
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from app.models.conversation import Conversation
+from app.services.paths_service import AppPaths
+
+
+@dataclass(frozen=True)
+class SpeakerTurn:
+    start: float
+    end: float
+    speaker: str
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.end - self.start)
 
 
 class DiarizationService:
-    TARGET_RATE = 16000
-    MIN_SEGMENT_SECONDS = 0.70
+    """
+    Diarización neuronal local para exactamente dos participantes.
+
+    Utiliza pyannote Community-1 y su salida exclusiva para reconciliar
+    de forma más estable los tiempos de Whisper con los cambios de voz.
+    """
+
+    MODEL_FOLDER = "pyannote-community-1"
+    REQUIRED_MARKERS = (
+        "config.yaml",
+    )
+
+    _pipeline = None
+    _pipeline_lock = threading.RLock()
+
+    def __init__(self) -> None:
+        self._paths = AppPaths()
+        self._logger = logging.getLogger(__name__)
+
+    @property
+    def model_path(self) -> Path:
+        return self._paths.models / self.MODEL_FOLDER
+
+    def is_ready(self) -> bool:
+        path = self.model_path
+
+        if not path.is_dir():
+            return False
+
+        return all(
+            (path / marker).is_file()
+            and (path / marker).stat().st_size > 0
+            for marker in self.REQUIRED_MARKERS
+        )
+
+    def readiness_message(self) -> str:
+        return (
+            "IDENTIFICADOR DE VOCES: LISTO"
+            if self.is_ready()
+            else "IDENTIFICADOR DE VOCES: NO DISPONIBLE"
+        )
 
     def diarize(
         self,
@@ -19,101 +76,140 @@ class DiarizationService:
         first_speaker_is_one: bool,
         progress_callback=None,
     ) -> Conversation:
-        if len(conversation.segments) < 2:
+        if not self.is_ready():
+            raise RuntimeError(
+                "EL MODELO DE IDENTIFICACIÓN DE VOCES "
+                "NO ESTÁ INSTALADO O ESTÁ INCOMPLETO."
+            )
+
+        if len(conversation.segments) < 1:
             return conversation
 
         if progress_callback:
             progress_callback(
-                91,
-                "PREPARANDO IDENTIFICACIÓN DE VOCES...",
+                90,
+                "CARGANDO IDENTIFICADOR DE VOCES...",
             )
 
-        samples = self._decode_mono(audio_path)
-        features = []
-        valid_indices = []
+        pipeline = self._load_pipeline()
 
-        for index, segment in enumerate(
-            conversation.segments
-        ):
-            start = max(
-                0,
-                int(segment.start * self.TARGET_RATE),
-            )
-            end = min(
-                len(samples),
-                int(segment.end * self.TARGET_RATE),
+        if progress_callback:
+            progress_callback(
+                92,
+                "IDENTIFICANDO DOS PARTICIPANTES...",
             )
 
-            if (
-                end - start
-                < int(
-                    self.TARGET_RATE
-                    * self.MIN_SEGMENT_SECONDS
-                )
-            ):
-                continue
+        waveform, sample_rate = self._read_waveform(audio_path)
 
-            feature = self._features(
-                samples[start:end]
+        import torch
+
+        tensor = torch.from_numpy(
+            waveform
+        ).unsqueeze(0)
+
+        with torch.inference_mode():
+            result = pipeline(
+                {
+                    "waveform": tensor,
+                    "sample_rate": sample_rate,
+                },
+                num_speakers=2,
             )
 
-            if feature is None:
-                continue
+        diarization = getattr(
+            result,
+            "exclusive_speaker_diarization",
+            None,
+        )
 
-            features.append(feature)
-            valid_indices.append(index)
-
-        if len(features) < 2:
-            return conversation
-
-        matrix = np.vstack(features)
-        matrix = self._standardize(matrix)
-        labels = self._two_means(matrix)
-        labels = self._smooth(labels)
-
-        first_cluster = labels[0]
-
-        if first_speaker_is_one:
-            mapping = {
-                first_cluster: speaker_one_label,
-                1 - first_cluster: speaker_two_label,
-            }
-        else:
-            mapping = {
-                first_cluster: speaker_two_label,
-                1 - first_cluster: speaker_one_label,
-            }
-
-        assignments = {
-            segment_index: mapping[label]
-            for segment_index, label in zip(
-                valid_indices,
-                labels,
+        if diarization is None:
+            diarization = getattr(
+                result,
+                "speaker_diarization",
+                result,
             )
+
+        turns = self._extract_turns(diarization)
+
+        if len(turns) < 2:
+            raise RuntimeError(
+                "NO FUE POSIBLE CONFIRMAR DOS VOCES "
+                "DIFERENTES EN EL ARCHIVO."
+            )
+
+        unique_speakers = {
+            turn.speaker
+            for turn in turns
         }
 
-        known = sorted(assignments)
-        previous = None
+        if len(unique_speakers) != 2:
+            raise RuntimeError(
+                "EL IDENTIFICADOR NO PUDO ESTABLECER "
+                "EXACTAMENTE DOS PARTICIPANTES."
+            )
 
-        for index, segment in enumerate(
-            conversation.segments
-        ):
-            speaker = assignments.get(index)
+        first_speaker = min(
+            turns,
+            key=lambda turn: (
+                turn.start,
+                -turn.duration,
+            ),
+        ).speaker
+        other_speaker = next(
+            speaker
+            for speaker in unique_speakers
+            if speaker != first_speaker
+        )
 
-            if speaker is None:
-                speaker = previous or self._nearest(
-                    index,
-                    known,
-                    assignments,
-                    speaker_one_label,
+        if first_speaker_is_one:
+            speaker_map = {
+                first_speaker: speaker_one_label,
+                other_speaker: speaker_two_label,
+            }
+        else:
+            speaker_map = {
+                first_speaker: speaker_two_label,
+                other_speaker: speaker_one_label,
+            }
+
+        if progress_callback:
+            progress_callback(
+                97,
+                "ASIGNANDO AGENTE Y CLIENTE...",
+            )
+
+        previous_label = None
+
+        for segment in conversation.segments:
+            raw_speaker, confidence = self._best_speaker(
+                segment.start,
+                segment.end,
+                turns,
+            )
+
+            if raw_speaker is None:
+                raw_speaker = self._nearest_speaker(
+                    segment.start,
+                    segment.end,
+                    turns,
                 )
 
-            previous = speaker
-            segment.speaker = speaker
+            label = speaker_map[raw_speaker]
+
+            # Solo reutiliza la etiqueta anterior en intervalos realmente
+            # ambiguos y contiguos. Nunca alterna hablantes artificialmente.
+            if (
+                confidence < 0.20
+                and previous_label is not None
+            ):
+                label = previous_label
+
+            segment.speaker = label
             segment.text = self._apply_label(
                 segment.text,
-                speaker,
+                label,
             )
+            previous_label = label
 
         if progress_callback:
             progress_callback(
@@ -123,325 +219,189 @@ class DiarizationService:
 
         return conversation
 
-    def _decode_mono(
-        self,
+    def _load_pipeline(self):
+        with self._pipeline_lock:
+            if self.__class__._pipeline is not None:
+                return self.__class__._pipeline
+
+            import torch
+            from pyannote.audio import Pipeline
+
+            available = max(
+                1,
+                os.cpu_count() or 2,
+            )
+            torch.set_num_threads(
+                max(
+                    1,
+                    min(6, available - 1),
+                )
+            )
+
+            pipeline = Pipeline.from_pretrained(
+                str(self.model_path)
+            )
+            pipeline.to(
+                torch.device("cpu")
+            )
+
+            self.__class__._pipeline = pipeline
+            return pipeline
+
+    @staticmethod
+    def _read_waveform(
         audio_path: Path,
-    ) -> np.ndarray:
-        import av
+    ) -> tuple[np.ndarray, int]:
+        """
+        Lee el WAV mono preparado por la aplicación.
 
-        chunks = []
-
-        with av.open(str(audio_path)) as container:
-            stream = next(
-                (
-                    item
-                    for item in container.streams
-                    if item.type == "audio"
-                ),
-                None,
+        Se entrega la forma de onda en memoria para evitar que pyannote
+        dependa de FFmpeg o de los decodificadores del equipo del usuario.
+        """
+        with wave.open(
+            str(audio_path),
+            "rb",
+        ) as wav_file:
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            sample_rate = wav_file.getframerate()
+            frames = wav_file.readframes(
+                wav_file.getnframes()
             )
 
-            if stream is None:
-                raise RuntimeError(
-                    "EL ARCHIVO NO CONTIENE AUDIO."
-                )
-
-            resampler = av.AudioResampler(
-                format="s16",
-                layout="mono",
-                rate=self.TARGET_RATE,
-            )
-
-            for frame in container.decode(stream):
-                converted = resampler.resample(frame)
-
-                if converted is None:
-                    continue
-
-                frames = (
-                    converted
-                    if isinstance(converted, list)
-                    else [converted]
-                )
-
-                for item in frames:
-                    chunks.append(
-                        item.to_ndarray()
-                        .reshape(-1)
-                        .astype(np.float32)
-                    )
-
-        if not chunks:
+        if sample_width != 2:
             raise RuntimeError(
-                "NO FUE POSIBLE LEER EL AUDIO."
+                "EL AUDIO PREPARADO NO TIENE FORMATO PCM DE 16 BITS."
             )
 
-        samples = np.concatenate(chunks)
-        peak = float(
-            np.max(np.abs(samples))
-        )
-
-        if peak > 0:
-            samples /= peak
-
-        return samples
-
-    def _features(
-        self,
-        samples: np.ndarray,
-    ) -> np.ndarray | None:
-        samples = samples.astype(
-            np.float32,
-            copy=False,
-        )
-        samples -= float(np.mean(samples))
-
-        energy = float(
-            np.sqrt(
-                np.mean(samples * samples)
-                + 1e-10
-            )
-        )
-
-        if energy < 0.003:
-            return None
-
-        frame_size = 400
-        hop = 160
-
-        if len(samples) < frame_size:
-            return None
-
-        frame_count = (
-            1
-            + (
-                len(samples)
-                - frame_size
-            )
-            // hop
-        )
-        indices = (
-            np.arange(frame_size)[None, :]
-            + hop
-            * np.arange(frame_count)[:, None]
-        )
-        frames = samples[indices]
-        frames *= np.hanning(
-            frame_size
+        audio = np.frombuffer(
+            frames,
+            dtype=np.int16,
         ).astype(np.float32)
 
-        spectrum = (
-            np.abs(
-                np.fft.rfft(
-                    frames,
-                    n=512,
-                )
+        if channels > 1:
+            audio = audio.reshape(
+                -1,
+                channels,
+            ).mean(axis=1)
+
+        if audio.size == 0:
+            raise RuntimeError(
+                "EL AUDIO PREPARADO ESTÁ VACÍO."
             )
-            + 1e-8
-        )
-        power = spectrum * spectrum
-        freqs = np.fft.rfftfreq(
-            512,
-            d=1.0 / self.TARGET_RATE,
-        )
-        total_power = (
-            np.sum(power, axis=1)
-            + 1e-8
-        )
-        centroid = (
-            np.sum(
-                power * freqs[None, :],
-                axis=1,
+
+        audio /= 32768.0
+        return audio, sample_rate
+
+    @staticmethod
+    def _extract_turns(
+        diarization,
+    ) -> list[SpeakerTurn]:
+        turns = []
+
+        try:
+            iterator = diarization.itertracks(
+                yield_label=True
             )
-            / total_power
-        )
-        zero_crossing = np.mean(
-            np.abs(
-                np.diff(
-                    np.signbit(frames),
-                    axis=1,
+            for turn, _, speaker in iterator:
+                turns.append(
+                    SpeakerTurn(
+                        start=float(turn.start),
+                        end=float(turn.end),
+                        speaker=str(speaker),
+                    )
                 )
+        except AttributeError:
+            for turn, speaker in diarization:
+                turns.append(
+                    SpeakerTurn(
+                        start=float(turn.start),
+                        end=float(turn.end),
+                        speaker=str(speaker),
+                    )
+                )
+
+        return sorted(
+            (
+                turn
+                for turn in turns
+                if turn.duration > 0
             ),
-            axis=1,
+            key=lambda turn: (
+                turn.start,
+                turn.end,
+            ),
         )
 
-        edges = np.linspace(
-            80,
-            7600,
-            13,
+    @staticmethod
+    def _best_speaker(
+        start: float,
+        end: float,
+        turns: list[SpeakerTurn],
+    ) -> tuple[str | None, float]:
+        segment_duration = max(
+            0.05,
+            end - start,
         )
-        bands = []
+        overlap_by_speaker: dict[str, float] = {}
 
-        for low, high in zip(
-            edges[:-1],
-            edges[1:],
-        ):
-            mask = (
-                (freqs >= low)
-                & (freqs < high)
+        for turn in turns:
+            overlap = max(
+                0.0,
+                min(end, turn.end)
+                - max(start, turn.start),
             )
 
-            if np.any(mask):
-                values = np.log(
-                    np.mean(
-                        power[:, mask],
-                        axis=1,
-                    )
-                    + 1e-8
+            if overlap <= 0:
+                continue
+
+            overlap_by_speaker[turn.speaker] = (
+                overlap_by_speaker.get(
+                    turn.speaker,
+                    0.0,
                 )
-                bands.extend(
-                    [
-                        float(np.mean(values)),
-                        float(np.std(values)),
-                    ]
-                )
-
-        return np.asarray(
-            [
-                energy,
-                float(np.mean(centroid)),
-                float(np.std(centroid)),
-                float(np.mean(zero_crossing)),
-                float(np.std(zero_crossing)),
-                *bands,
-            ],
-            dtype=np.float32,
-        )
-
-    @staticmethod
-    def _standardize(
-        matrix: np.ndarray,
-    ) -> np.ndarray:
-        mean = np.mean(
-            matrix,
-            axis=0,
-            keepdims=True,
-        )
-        std = np.std(
-            matrix,
-            axis=0,
-            keepdims=True,
-        )
-        std[std < 1e-6] = 1.0
-        return (matrix - mean) / std
-
-    @staticmethod
-    def _two_means(
-        matrix: np.ndarray,
-    ) -> list[int]:
-        first = 0
-        second = int(
-            np.argmax(
-                np.sum(
-                    (matrix - matrix[first]) ** 2,
-                    axis=1,
-                )
-            )
-        )
-        centers = np.vstack(
-            [
-                matrix[first],
-                matrix[second],
-            ]
-        )
-        labels = np.zeros(
-            len(matrix),
-            dtype=np.int32,
-        )
-
-        for _ in range(20):
-            distances = np.stack(
-                [
-                    np.sum(
-                        (matrix - centers[0]) ** 2,
-                        axis=1,
-                    ),
-                    np.sum(
-                        (matrix - centers[1]) ** 2,
-                        axis=1,
-                    ),
-                ],
-                axis=1,
-            )
-            updated = np.argmin(
-                distances,
-                axis=1,
-            ).astype(np.int32)
-
-            if np.array_equal(
-                labels,
-                updated,
-            ):
-                break
-
-            labels = updated
-
-            for cluster in (0, 1):
-                members = matrix[
-                    labels == cluster
-                ]
-
-                if len(members):
-                    centers[cluster] = np.mean(
-                        members,
-                        axis=0,
-                    )
-
-        if len(set(labels.tolist())) < 2:
-            labels = np.asarray(
-                [
-                    index % 2
-                    for index in range(
-                        len(matrix)
-                    )
-                ],
-                dtype=np.int32,
+                + overlap
             )
 
-        return labels.tolist()
+        if not overlap_by_speaker:
+            return None, 0.0
+
+        speaker, overlap = max(
+            overlap_by_speaker.items(),
+            key=lambda item: item[1],
+        )
+        confidence = min(
+            1.0,
+            overlap / segment_duration,
+        )
+        return speaker, confidence
 
     @staticmethod
-    def _smooth(
-        labels: list[int],
-    ) -> list[int]:
-        output = labels[:]
-
-        for index in range(
-            1,
-            len(output) - 1,
-        ):
-            if (
-                output[index - 1]
-                == output[index + 1]
-                != output[index]
-            ):
-                output[index] = output[index - 1]
-
-        return output
-
-    @staticmethod
-    def _nearest(
-        index: int,
-        known: list[int],
-        assignments: dict[int, str],
-        fallback: str,
+    def _nearest_speaker(
+        start: float,
+        end: float,
+        turns: list[SpeakerTurn],
     ) -> str:
-        if not known:
-            return fallback
+        midpoint = (
+            start + end
+        ) / 2.0
 
         nearest = min(
-            known,
-            key=lambda item: abs(
-                item - index
+            turns,
+            key=lambda turn: min(
+                abs(midpoint - turn.start),
+                abs(midpoint - turn.end),
             ),
         )
-        return assignments[nearest]
+        return nearest.speaker
 
     @staticmethod
     def _apply_label(
         text: str,
         speaker: str,
     ) -> str:
+        import re
+
         timestamp = re.match(
             r"^(\[[^\]]+\]\s*)(.*)$",
             text,
@@ -461,7 +421,7 @@ class DiarizationService:
                 f"{body.strip()}"
             )
 
-        clean = re.sub(
+        body = re.sub(
             r"^\s*[^:\n]{1,40}:\s*",
             "",
             text,
@@ -469,5 +429,10 @@ class DiarizationService:
         )
         return (
             f"{speaker}: "
-            f"{clean.strip()}"
+            f"{body.strip()}"
         )
+
+    @classmethod
+    def release(cls) -> None:
+        with cls._pipeline_lock:
+            cls._pipeline = None

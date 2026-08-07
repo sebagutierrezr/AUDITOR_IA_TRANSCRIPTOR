@@ -6,13 +6,15 @@ if (Test-Path dist) { Remove-Item dist -Recurse -Force }
 if (Test-Path release) { Remove-Item release -Recurse -Force }
 New-Item -ItemType Directory -Path release | Out-Null
 
-Write-Host "DESCARGANDO Y VERIFICANDO MODELOS BASE Y SMALL..."
+Write-Host "DESCARGANDO Y VERIFICANDO MODELOS..."
 python "scripts\download_release_models.py"
 
 Write-Host "COMPILANDO APLICACIÓN..."
 python -m PyInstaller --clean --noconfirm AUDITOR_IA.spec
 
-$portable = Join-Path $PSScriptRoot "dist\AUDITOR_IA_6.0_PORTABLE"
+$portable = Join-Path `
+    $PSScriptRoot `
+    "dist\AUDITOR_IA_6.1.0_PORTABLE"
 
 foreach ($folder in @(
     "models",
@@ -32,16 +34,19 @@ foreach ($folder in @(
 
 Write-Host "COPIANDO MODELOS OFFLINE..."
 Copy-Item `
-    -Path "$PSScriptRoot\models\base" `
-    -Destination "$portable\models\base" `
-    -Recurse `
-    -Force
+    "$PSScriptRoot\models\base" `
+    "$portable\models\base" `
+    -Recurse -Force
 
 Copy-Item `
-    -Path "$PSScriptRoot\models\small" `
-    -Destination "$portable\models\small" `
-    -Recurse `
-    -Force
+    "$PSScriptRoot\models\small" `
+    "$portable\models\small" `
+    -Recurse -Force
+
+Copy-Item `
+    "$PSScriptRoot\models\pyannote-community-1" `
+    "$portable\models\pyannote-community-1" `
+    -Recurse -Force
 
 if (Test-Path "$PSScriptRoot\config\settings.json") {
     Copy-Item `
@@ -57,9 +62,14 @@ if (Test-Path "$PSScriptRoot\config\defaults.json") {
         -Force
 }
 
+Copy-Item `
+    "$PSScriptRoot\ATTRIBUTIONS.md" `
+    "$portable\ATTRIBUTIONS.md" `
+    -Force
+
 $zip = Join-Path `
     $PSScriptRoot `
-    "release\AUDITOR_IA_6.0.1_Portable.zip"
+    "release\AUDITOR_IA_6.1.0_Portable.zip"
 
 Compress-Archive `
     -Path "$portable\*" `

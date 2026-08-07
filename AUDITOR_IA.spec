@@ -5,6 +5,7 @@ from PyInstaller.utils.hooks import collect_all
 root = Path(SPECPATH)
 datas = [
     (str(root / "resources"), "resources"),
+    (str(root / "ATTRIBUTIONS.md"), "."),
 ]
 binaries = []
 hiddenimports = []
@@ -19,6 +20,17 @@ for package in (
     "docx",
     "numpy",
     "huggingface_hub",
+    "torch",
+    "torchaudio",
+    "torchcodec",
+    "pyannote.audio",
+    "pyannote.core",
+    "pyannote.database",
+    "pyannote.metrics",
+    "speechbrain",
+    "lightning",
+    "scipy",
+    "sklearn",
 ):
     try:
         d, b, h = collect_all(package)
@@ -34,10 +46,18 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    excludes=["tkinter", "pytest", "matplotlib"],
+    excludes=[
+        "tkinter",
+        "pytest",
+        "matplotlib",
+        "jupyter",
+        "notebook",
+    ],
     noarchive=False,
 )
+
 pyz = PYZ(a.pure)
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -50,11 +70,12 @@ exe = EXE(
     strip=False,
     upx=False,
 )
+
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
     strip=False,
     upx=False,
-    name="AUDITOR_IA_6.0_PORTABLE",
+    name="AUDITOR_IA_6.1.0_PORTABLE",
 )

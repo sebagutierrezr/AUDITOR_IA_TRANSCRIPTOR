@@ -1,3 +1,16 @@
+# V6.1.0 — Identificación profesional Agente/Cliente
+
+- Sustituida la diarización simplificada por pyannote Community-1.
+- El motor trabaja con exactamente dos participantes.
+- Se usa la diarización exclusiva para reconciliar tiempos con Whisper.
+- Cada intervención se asigna por mayor solapamiento temporal.
+- No se alternan etiquetas de manera artificial.
+- Los fallos de identificación ya no generan resultados etiquetados inseguros.
+- Modelos Base, Small y Community-1 incluidos en Setup y Portable.
+- Verificación previa de transcripción e identificación.
+- PyTorch CPU para compatibilidad con equipos sin tarjeta gráfica.
+- Release objetivo: v6.1.0.
+
 # V6.0.1 — Modelos incluidos y verificados
 
 - Modelos Base y Small incluidos en Setup y Portable.

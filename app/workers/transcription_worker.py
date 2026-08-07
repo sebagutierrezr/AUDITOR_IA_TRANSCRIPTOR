@@ -100,12 +100,13 @@ class TranscriptionWorker(QObject):
                     self._logger.exception(
                         "NO FUE POSIBLE IDENTIFICAR HABLANTES"
                     )
-                    self.warning.emit(
-                        "LA TRANSCRIPCIÓN SE COMPLETÓ, PERO NO FUE POSIBLE "
-                        "IDENTIFICAR AUTOMÁTICAMENTE AGENTE Y CLIENTE. "
-                        "PUEDES CORREGIR LAS LÍNEAS CON LOS BOTONES DEL PANEL.\n\n"
+                    raise RuntimeError(
+                        "LA TRANSCRIPCIÓN DE TEXTO TERMINÓ, PERO LA "
+                        "IDENTIFICACIÓN AGENTE/CLIENTE FALLÓ. "
+                        "NO SE ENTREGARÁ UNA TRANSCRIPCIÓN ETIQUETADA "
+                        "DE FORMA INSEGURA.\n\n"
                         f"DETALLE: {type(exc).__name__}: {exc}"
-                    )
+                    ) from exc
 
             self.progress.emit(100, "TRANSCRIPCIÓN FINALIZADA")
             self.completed.emit(conversation)

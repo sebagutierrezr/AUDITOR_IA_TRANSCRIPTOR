@@ -1,37 +1,33 @@
-# AUDITOR IA 6.0 — CONSOLIDADA
+# AUDITOR IA 6.1.0
 
-## Archivos
+Versión enfocada en la calidad de identificación Agente/Cliente.
 
-- Selección estable.
-- Conversión mono.
-- Etiquetas Agente/Cliente.
-- Corrección manual.
-- Exportación TXT y Word en segundo plano.
-- Guardado automático en `exports`.
+## Motores incluidos
 
-## En vivo
+- Faster-Whisper Base: perfil Rápido.
+- Faster-Whisper Small: perfil Balanceado.
+- pyannote Community-1: identificación neuronal de voces.
 
-Conserva sensibilidad, filtro de ruido, ajustes durante la sesión y auto-scroll.
+Los tres modelos se incluyen en el instalador y en el portable. La aplicación
+no descarga modelos durante el uso.
 
-## Perfiles
+## Identificación
 
-- RÁPIDO: Base.
-- BALANCEADO: Small.
-- PRECISO: Medium.
+- Audio preparado como WAV mono de 16 kHz.
+- Exactamente dos participantes.
+- El primer participante se asigna según la configuración.
+- Cruce de tiempos por mayor solapamiento.
+- Corrección manual disponible en el panel.
 
-## Instalación
+## Requisito para construir en GitHub
 
-1. Python 3.11 de 64 bits.
-2. Ejecuta `setup.bat`.
-3. Ejecuta `run.bat`.
+Community-1 requiere aceptar sus condiciones y usar un token de Hugging Face.
 
+1. Aceptar condiciones en:
+   `pyannote/speaker-diarization-community-1`
+2. Crear un token de lectura en Hugging Face.
+3. En GitHub: Settings > Secrets and variables > Actions.
+4. Crear el secreto `HF_TOKEN`.
+5. Ejecutar el workflow o crear el tag `v6.1.0`.
 
-## Versión 6.0.1 — modelos offline
-
-El instalador y el portable incluyen:
-
-- Modelo Base para el perfil Rápido.
-- Modelo Small para el perfil Balanceado.
-
-La aplicación verifica los modelos antes de transcribir. No intenta descargarlos
-durante el uso. En Configuración se puede presionar `VERIFICAR MODELOS INSTALADOS`.
+El token solo se usa durante la compilación. No queda dentro del instalador.
