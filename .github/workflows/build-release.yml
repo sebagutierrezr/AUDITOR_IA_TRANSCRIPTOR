@@ -33,8 +33,11 @@ jobs:
       - name: Instalar dependencias
         shell: pwsh
         run: |
+          python -m pip install --upgrade pip
+          python -m pip install "huggingface_hub>=0.23,<1.0"
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller==6.14.2
+          python -c "import huggingface_hub; print('huggingface_hub OK:', huggingface_hub.__version__)"
 
       - name: Instalar Inno Setup
         shell: pwsh
