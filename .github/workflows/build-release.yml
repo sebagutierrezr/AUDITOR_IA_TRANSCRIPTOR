@@ -39,9 +39,12 @@ jobs:
           python -m pip install pyinstaller==6.14.2
           python -c "import huggingface_hub; print('huggingface_hub OK:', huggingface_hub.__version__)"
 
-      - name: Instalar Inno Setup
+      - name: Instalar herramientas de empaquetado
         shell: pwsh
-        run: choco install innosetup --no-progress -y
+        run: |
+          choco install innosetup --no-progress -y
+          choco install 7zip --no-progress -y
+          & "C:\Program Files\7-Zip\7z.exe" | Select-Object -First 3
 
       - name: Construir portable e instalador
         shell: pwsh
