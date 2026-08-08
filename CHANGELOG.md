@@ -1,4 +1,4 @@
-# V6.1.0 — Identificación profesional Agente/Cliente
+# V6.1.1 — Identificación profesional Agente/Cliente
 
 - Sustituida la diarización simplificada por pyannote Community-1.
 - El motor trabaja con exactamente dos participantes.
@@ -9,7 +9,7 @@
 - Modelos Base, Small y Community-1 incluidos en Setup y Portable.
 - Verificación previa de transcripción e identificación.
 - PyTorch CPU para compatibilidad con equipos sin tarjeta gráfica.
-- Release objetivo: v6.1.0.
+- Release objetivo: v6.1.1.
 
 # V6.0.1 — Modelos incluidos y verificados
 

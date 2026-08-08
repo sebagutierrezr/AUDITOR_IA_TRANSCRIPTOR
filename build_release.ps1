@@ -63,7 +63,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller no pudo compilar la aplicacion."
 }
 
-$portable = Join-Path $PSScriptRoot "dist\AUDITOR_IA_6.1.0_PORTABLE"
+$portable = Join-Path $PSScriptRoot "dist\AUDITOR_IA_6.1.1_PORTABLE"
 
 if (-not (Test-Path $portable)) {
     throw "No se genero la carpeta portable: $portable"
@@ -142,7 +142,7 @@ Write-Host "7-ZIP: $sevenZip"
 
 $portableZip = Join-Path `
     $PSScriptRoot `
-    "release\AUDITOR_IA_6.1.0_Portable.zip"
+    "release\AUDITOR_IA_6.1.1_Portable.zip"
 
 if (Test-Path $portableZip) {
     Remove-Item $portableZip -Force
@@ -193,7 +193,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $setupFile = Join-Path `
     $PSScriptRoot `
-    "release\AUDITOR_IA_6.1.0_Setup.exe"
+    "release\AUDITOR_IA_6.1.1_Setup.exe"
 
 if (-not (Test-Path $setupFile)) {
     throw "No se genero el instalador esperado: $setupFile"
