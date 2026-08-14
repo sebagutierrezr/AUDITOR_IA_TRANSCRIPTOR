@@ -33,24 +33,60 @@ jobs:
       - name: Instalar dependencias
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install "huggingface_hub>=0.23,<1.0"
           python -m pip install -r requirements.txt
-          python -m pip install pyinstaller==6.14.2
-          python -c "import huggingface_hub; print('huggingface_hub OK:', huggingface_hub.__version__)"
+          python -m pip install pyinstaller==6.14.2 "pyinstaller-hooks-contrib>=2025.8"
 
-      - name: Instalar herramientas de empaquetado
+      - name: Instalar Inno Setup
         shell: pwsh
-        run: |
-          choco install innosetup --no-progress -y
-          choco install 7zip --no-progress -y
-          & "C:\Program Files\7-Zip\7z.exe" | Select-Object -First 3
+        run: choco install innosetup --no-progress -y
 
       - name: Construir portable e instalador
         shell: pwsh
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: ./build_release.ps1
+
+      - name: Verificar ejecutable empaquetado
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem `
+            -Path "dist" `
+            -Filter "AUDITOR_IA.exe" `
+            -File `
+            -Recurse |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            throw "No se encontró AUDITOR_IA.exe para la prueba de arranque."
+          }
+
+          Write-Host "PROBANDO EJECUTABLE REAL:"
+          Write-Host $exe.FullName
+
+          $env:AUDITOR_IA_SELF_TEST = "1"
+
+          $process = Start-Process `
+            -FilePath $exe.FullName `
+            -WorkingDirectory $exe.Directory.FullName `
+            -Wait `
+            -PassThru
+
+          Remove-Item Env:AUDITOR_IA_SELF_TEST
+
+          if ($process.ExitCode -ne 0) {
+            $errorFile = Join-Path `
+              $exe.Directory.FullName `
+              "runtime_self_test_error.txt"
+
+            if (Test-Path $errorFile) {
+              Write-Host "ERROR DEL SELF-TEST:"
+              Get-Content $errorFile
+            }
+
+            throw "El ejecutable empaquetado no superó la prueba de dependencias. ExitCode=$($process.ExitCode)"
+          }
+
+          Write-Host "SELF-TEST DEL EJECUTABLE: CORRECTO"
 
       - name: Guardar archivos como artefactos
         uses: actions/upload-artifact@v4

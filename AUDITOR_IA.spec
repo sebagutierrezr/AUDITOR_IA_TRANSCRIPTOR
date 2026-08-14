@@ -1,22 +1,48 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
+
+from PyInstaller.utils.hooks import (
+    collect_all,
+    collect_submodules,
+)
+
 
 root = Path(SPECPATH)
+
 datas = [
     (str(root / "resources"), "resources"),
     (str(root / "ATTRIBUTIONS.md"), "."),
 ]
 binaries = []
-hiddenimports = []
-
-for package in (
+hiddenimports = [
     "PySide6",
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtWidgets",
+    "shiboken6",
+]
+
+
+def require_package(package: str) -> None:
+    """
+    Dependencias críticas: si PyInstaller no puede recopilarlas,
+    el build debe FALLAR en vez de crear un ejecutable incompleto.
+    """
+    d, b, h = collect_all(package)
+    datas.extend(d)
+    binaries.extend(b)
+    hiddenimports.extend(h)
+
+
+# Interfaz: nunca ocultar errores de colección.
+require_package("PySide6")
+require_package("shiboken6")
+
+# Dependencias esenciales del producto.
+for package in (
     "faster_whisper",
     "ctranslate2",
     "av",
-    "soundcard",
-    "sounddevice",
     "docx",
     "numpy",
     "huggingface_hub",
@@ -31,14 +57,28 @@ for package in (
     "lightning",
     "scipy",
     "sklearn",
+    "soundcard",
+    "sounddevice",
 ):
     try:
-        d, b, h = collect_all(package)
-        datas += d
-        binaries += b
-        hiddenimports += h
-    except Exception:
-        pass
+        require_package(package)
+    except Exception as exc:
+        # Paquetes no esenciales para el arranque pueden apoyarse
+        # además en el análisis normal de imports, pero dejamos
+        # constancia visible durante el build.
+        print(
+            f"[PyInstaller] Advertencia recopilando "
+            f"{package}: {type(exc).__name__}: {exc}"
+        )
+
+# Refuerzo para módulos dinámicos de Qt.
+hiddenimports.extend(
+    collect_submodules("PySide6")
+)
+
+# Quitar duplicados manteniendo el orden.
+hiddenimports = list(dict.fromkeys(hiddenimports))
+
 
 a = Analysis(
     ["main.py"],
@@ -77,5 +117,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="AUDITOR_IA_6.1.0_PORTABLE",
+    name="AUDITOR_IA_6.1.1_PORTABLE",
 )
