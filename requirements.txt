@@ -3,7 +3,6 @@ psutil==6.1.1
 faster-whisper==1.2.1
 ctranslate2==4.8.1
 av==18.0.0
-huggingface-hub==0.23.5
 python-docx==1.1.2
 numpy==1.26.4
 SoundCard==0.4.4
