@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $env:AUDITOR_IA_PROJECT_ROOT = $PSScriptRoot
@@ -78,6 +78,96 @@ if ($generatedFolder -ne $portable) {
 
 if (-not (Test-Path $portable)) { throw "No fue posible preparar la carpeta portable: $portable" }
 if (-not (Test-Path (Join-Path $portable "AUDITOR_IA.exe"))) { throw "La carpeta portable no contiene AUDITOR_IA.exe." }
+
+# ------------------------------------------------------------
+# REFUERZO DE RUNTIME QT / PYSIDE6
+# ------------------------------------------------------------
+# PyInstaller debe incluir estos paquetes por hooks, pero para una distribución
+# robusta verificamos el entorno de build y copiamos explícitamente el runtime
+# real de PySide6 y shiboken6 dentro de _internal si es necesario.
+
+Write-Host "VERIFICANDO PYSIDE6 EN EL ENTORNO DE BUILD..."
+
+python -c "import PySide6, shiboken6; print('PySide6:', PySide6.__version__); print('PySide6 path:', PySide6.__file__); print('shiboken6 path:', shiboken6.__file__)"
+if ($LASTEXITCODE -ne 0) {
+    throw "PySide6 o shiboken6 no estan disponibles en el entorno de compilacion."
+}
+
+$internalRoot = Join-Path $portable "_internal"
+New-Item -ItemType Directory -Path $internalRoot -Force | Out-Null
+
+$pySidePath = (
+    python -c "import PySide6, pathlib; print(pathlib.Path(PySide6.__file__).resolve().parent)"
+).Trim()
+
+$shibokenPath = (
+    python -c "import shiboken6, pathlib; print(pathlib.Path(shiboken6.__file__).resolve().parent)"
+).Trim()
+
+if (-not (Test-Path $pySidePath)) {
+    throw "No se encontro la carpeta fisica de PySide6: $pySidePath"
+}
+
+if (-not (Test-Path $shibokenPath)) {
+    throw "No se encontro la carpeta fisica de shiboken6: $shibokenPath"
+}
+
+$pySideTarget = Join-Path $internalRoot "PySide6"
+$shibokenTarget = Join-Path $internalRoot "shiboken6"
+
+Write-Host "COPIANDO RUNTIME PYSIDE6..."
+Write-Host "ORIGEN: $pySidePath"
+Write-Host "DESTINO: $pySideTarget"
+
+if (Test-Path $pySideTarget) {
+    Remove-Item $pySideTarget -Recurse -Force
+}
+
+Copy-Item `
+    -Path $pySidePath `
+    -Destination $pySideTarget `
+    -Recurse `
+    -Force
+
+Write-Host "COPIANDO RUNTIME SHIBOKEN6..."
+Write-Host "ORIGEN: $shibokenPath"
+Write-Host "DESTINO: $shibokenTarget"
+
+if (Test-Path $shibokenTarget) {
+    Remove-Item $shibokenTarget -Recurse -Force
+}
+
+Copy-Item `
+    -Path $shibokenPath `
+    -Destination $shibokenTarget `
+    -Recurse `
+    -Force
+
+$qtCore = Get-ChildItem `
+    -Path $pySideTarget `
+    -Filter "QtCore*.pyd" `
+    -File `
+    -Recurse |
+    Select-Object -First 1
+
+$qtWidgets = Get-ChildItem `
+    -Path $pySideTarget `
+    -Filter "QtWidgets*.pyd" `
+    -File `
+    -Recurse |
+    Select-Object -First 1
+
+if (-not $qtCore) {
+    throw "El runtime copiado de PySide6 no contiene QtCore."
+}
+
+if (-not $qtWidgets) {
+    throw "El runtime copiado de PySide6 no contiene QtWidgets."
+}
+
+Write-Host "PYSIDE6 RUNTIME: LISTO"
+Write-Host "QTCORE: $($qtCore.FullName)"
+Write-Host "QTWIDGETS: $($qtWidgets.FullName)"
 
 foreach ($folder in @("models","config","data","exports","logs","recordings","temp","engines")) {
     New-Item -ItemType Directory -Path (Join-Path $portable $folder) -Force | Out-Null
