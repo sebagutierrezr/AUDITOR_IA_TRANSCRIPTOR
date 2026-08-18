@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
 
     steps:
       - name: Descargar código
@@ -23,90 +23,64 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Actualizar pip
+      - name: Preparar Micromamba
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: powershell
+          cache-environment: false
+
+      - name: Instalar FFmpeg 7 Shared
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:GITHUB_WORKSPACE ".ffmpeg7"
+          micromamba create -y -p "$prefix" -c conda-forge "ffmpeg=7.*"
+          if ($LASTEXITCODE -ne 0) { throw "No se pudo instalar FFmpeg 7." }
+
+          $ffmpegBin = Join-Path $prefix "Library\bin"
+          if (-not (Test-Path "$ffmpegBin\ffmpeg.exe")) { throw "ffmpeg.exe no encontrado." }
+
+          foreach ($pattern in @("avcodec-*.dll","avformat-*.dll","avutil-*.dll","swresample-*.dll")) {
+            if (-not (Get-ChildItem $ffmpegBin -Filter $pattern -File)) { throw "FFmpeg Shared incompleto: $pattern" }
+          }
+
+          $line = & "$ffmpegBin\ffmpeg.exe" -version | Select-Object -First 1
+          Write-Host $line
+          if ($line -notmatch "ffmpeg version 7") { throw "FFmpeg instalado no es major 7." }
+
+          "AUDITOR_IA_FFMPEG_BIN=$ffmpegBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $ffmpegBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Preparar Python y PyTorch CPU
         shell: pwsh
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          if ($LASTEXITCODE -ne 0) {
-            throw "No fue posible actualizar pip/setuptools/wheel."
-          }
-
-      - name: Instalar PyTorch CPU
-        shell: pwsh
-        run: |
+          if ($LASTEXITCODE -ne 0) { throw "Fallo actualizando pip." }
           python -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-          if ($LASTEXITCODE -ne 0) {
-            throw "Falló la instalación de PyTorch CPU."
-          }
+          if ($LASTEXITCODE -ne 0) { throw "Fallo PyTorch CPU." }
 
-          python -c "import torch; print('torch OK:', torch.__version__)"
-          if ($LASTEXITCODE -ne 0) {
-            throw "PyTorch no se puede importar después de instalarlo."
-          }
-
-      - name: Instalar dependencias de Auditor IA
+      - name: Instalar dependencias
         shell: pwsh
         run: |
           python -m pip install -r requirements.txt
-          if ($LASTEXITCODE -ne 0) {
-            throw "pip install -r requirements.txt FALLÓ. Revisar el error de dependencias mostrado arriba."
-          }
-
+          if ($LASTEXITCODE -ne 0) { throw "requirements.txt fallo." }
           python -m pip check
-          if ($LASTEXITCODE -ne 0) {
-            throw "pip check detectó dependencias incompatibles."
-          }
+          if ($LASTEXITCODE -ne 0) { throw "pip check detecto incompatibilidades." }
 
-      - name: Verificar dependencias críticas antes de compilar
+      - name: Verificar runtime antes de compilar
         shell: pwsh
         run: |
-          python -c "import PySide6, shiboken6; print('PySide6 OK:', PySide6.__version__)"
-          if ($LASTEXITCODE -ne 0) {
-            throw "PySide6/shiboken6 no están disponibles. El build se detiene antes de PyInstaller."
-          }
+          python scripts\verify_native_runtime.py --ffmpeg-bin "$env:AUDITOR_IA_FFMPEG_BIN"
+          if ($LASTEXITCODE -ne 0) { throw "Runtime previo fallo." }
 
-          python -c "import faster_whisper, ctranslate2, av; print('Faster-Whisper/CTranslate2/PyAV OK')"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Faster-Whisper/CTranslate2/PyAV no están disponibles."
-          }
-
-          python -c "import pyannote.audio, torchcodec, huggingface_hub; print('pyannote/torchcodec/huggingface_hub OK')"
-          if ($LASTEXITCODE -ne 0) {
-            throw "pyannote/torchcodec/huggingface_hub no están disponibles."
-          }
-
-          python -c "import numpy, docx; print('NumPy/python-docx OK')"
-          if ($LASTEXITCODE -ne 0) {
-            throw "NumPy/python-docx no están disponibles."
-          }
-
-          Write-Host "TODAS LAS DEPENDENCIAS CRITICAS: LISTAS"
-
-      - name: Instalar herramientas de compilación
+      - name: Instalar herramientas de build
         shell: pwsh
         run: |
           python -m pip install pyinstaller==6.14.2 "pyinstaller-hooks-contrib>=2025.8"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Falló la instalación de PyInstaller."
-          }
-
-          python -c "import PyInstaller, PySide6; print('PyInstaller:', PyInstaller.__version__); print('PySide6 sigue OK:', PySide6.__version__)"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Las dependencias críticas dejaron de estar disponibles tras instalar PyInstaller."
-          }
-
-      - name: Instalar herramientas de empaquetado
-        shell: pwsh
-        run: |
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller fallo al instalar." }
           choco install innosetup --no-progress -y
-          if ($LASTEXITCODE -ne 0) {
-            throw "Falló la instalación de Inno Setup."
-          }
-
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo al instalar." }
           choco install 7zip --no-progress -y
-          if ($LASTEXITCODE -ne 0) {
-            throw "Falló la instalación de 7-Zip."
-          }
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip fallo al instalar." }
 
       - name: Construir portable e instalador
         shell: pwsh
@@ -114,49 +88,24 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: ./build_release.ps1
 
-      - name: Verificar ejecutable empaquetado
+      - name: Self-test del EXE real
         shell: pwsh
         run: |
-          $exe = Get-ChildItem `
-            -Path "dist" `
-            -Filter "AUDITOR_IA.exe" `
-            -File `
-            -Recurse |
-            Select-Object -First 1
-
-          if (-not $exe) {
-            throw "No se encontró AUDITOR_IA.exe para la prueba de arranque."
-          }
-
-          Write-Host "PROBANDO EJECUTABLE REAL:"
-          Write-Host $exe.FullName
+          $exe = "dist\AUDITOR_IA_6.1.1_PORTABLE\AUDITOR_IA.exe"
+          if (-not (Test-Path $exe)) { throw "EXE no existe." }
 
           $env:AUDITOR_IA_SELF_TEST = "1"
-
-          $process = Start-Process `
-            -FilePath $exe.FullName `
-            -WorkingDirectory $exe.Directory.FullName `
-            -Wait `
-            -PassThru
-
+          $process = Start-Process -FilePath $exe -WorkingDirectory "dist\AUDITOR_IA_6.1.1_PORTABLE" -Wait -PassThru
           Remove-Item Env:AUDITOR_IA_SELF_TEST
 
           if ($process.ExitCode -ne 0) {
-            $errorFile = Join-Path `
-              $exe.Directory.FullName `
-              "runtime_self_test_error.txt"
-
-            if (Test-Path $errorFile) {
-              Write-Host "ERROR DEL SELF-TEST:"
-              Get-Content $errorFile
-            }
-
-            throw "El ejecutable empaquetado no superó la prueba de dependencias. ExitCode=$($process.ExitCode)"
+            $err = "dist\AUDITOR_IA_6.1.1_PORTABLE\runtime_self_test_error.txt"
+            if (Test-Path $err) { Get-Content $err }
+            throw "SELF-TEST fallo. ExitCode=$($process.ExitCode)"
           }
+          Write-Host "SELF-TEST DEL EXE: CORRECTO"
 
-          Write-Host "SELF-TEST DEL EJECUTABLE: CORRECTO"
-
-      - name: Guardar archivos como artefactos
+      - name: Guardar artefactos
         uses: actions/upload-artifact@v4
         with:
           name: AUDITOR_IA_6.1.1_Windows
@@ -176,4 +125,4 @@ jobs:
             "release/AUDITOR_IA_6.1.1_Setup.exe" `
             "release/AUDITOR_IA_6.1.1_Portable.zip" `
             --title "AUDITOR IA 6.1.1" `
-            --notes "Versión 6.1.1 para Windows con Faster-Whisper Base/Small y pyannote Community-1."
+            --notes "Windows build validado con PySide6, Faster-Whisper, PyTorch 2.8, TorchCodec 0.7, FFmpeg 7 Shared y pyannote Community-1."

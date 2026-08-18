@@ -3,180 +3,57 @@ Set-Location $PSScriptRoot
 
 $env:AUDITOR_IA_PROJECT_ROOT = $PSScriptRoot
 $version = "6.1.1"
-$portableName = "AUDITOR_IA_${version}_PORTABLE"
 
+if (-not $env:AUDITOR_IA_FFMPEG_BIN) {
+    throw "AUDITOR_IA_FFMPEG_BIN no configurado."
+}
+
+$ffmpegSource = $env:AUDITOR_IA_FFMPEG_BIN
 $modelsRoot = Join-Path $PSScriptRoot "models"
 $baseModel = Join-Path $modelsRoot "base"
 $smallModel = Join-Path $modelsRoot "small"
 $voiceModel = Join-Path $modelsRoot "pyannote-community-1"
-
-$buildRoot = Join-Path $PSScriptRoot "build"
 $distRoot = Join-Path $PSScriptRoot "dist"
+$portable = Join-Path $distRoot "AUDITOR_IA_6.1.1_PORTABLE"
 $releaseRoot = Join-Path $PSScriptRoot "release"
-$portable = Join-Path $distRoot $portableName
 
-if (Test-Path $buildRoot) { Remove-Item $buildRoot -Recurse -Force }
-if (Test-Path $distRoot) { Remove-Item $distRoot -Recurse -Force }
-if (Test-Path $releaseRoot) { Remove-Item $releaseRoot -Recurse -Force }
-
+foreach ($p in @("build", $distRoot, $releaseRoot)) {
+    if (Test-Path $p) { Remove-Item $p -Recurse -Force }
+}
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $modelsRoot -Force | Out-Null
 
-Write-Host "RAIZ DEL PROYECTO: $PSScriptRoot"
-Write-Host "CARPETA DE MODELOS: $modelsRoot"
-
-python -c "import huggingface_hub; print('huggingface_hub OK:', huggingface_hub.__version__)"
-if ($LASTEXITCODE -ne 0) {
-    python -m pip install "huggingface_hub>=0.23,<1.0"
-    if ($LASTEXITCODE -ne 0) { throw "No fue posible instalar huggingface_hub." }
-}
-
+Write-Host "DESCARGANDO Y VERIFICANDO MODELOS..."
 python "$PSScriptRoot\scripts\download_release_models.py"
-if ($LASTEXITCODE -ne 0) { throw "La descarga o verificacion de modelos fallo." }
+if ($LASTEXITCODE -ne 0) { throw "Fallo descarga/verificacion de modelos." }
 
-$requiredModels = @(
-    @{ Name = "BASE"; Path = $baseModel; Marker = "model.bin" },
-    @{ Name = "SMALL"; Path = $smallModel; Marker = "model.bin" },
-    @{ Name = "VOCES"; Path = $voiceModel; Marker = "config.yaml" }
-)
+python "$PSScriptRoot\scripts\verify_native_runtime.py" `
+    --ffmpeg-bin "$ffmpegSource" `
+    --voice-model "$voiceModel"
+if ($LASTEXITCODE -ne 0) { throw "Runtime/modelos no validos." }
 
-foreach ($model in $requiredModels) {
-    $markerPath = Join-Path $model.Path $model.Marker
-    if (-not (Test-Path $model.Path)) { throw "No existe la carpeta del modelo $($model.Name): $($model.Path)" }
-    if (-not (Test-Path $markerPath)) { throw "El modelo $($model.Name) esta incompleto. Falta: $markerPath" }
-    Write-Host "MODELO $($model.Name): LISTO"
-}
-
-Write-Host "COMPILANDO APLICACION..."
+Write-Host "COMPILANDO..."
 python -m PyInstaller --clean --noconfirm "$PSScriptRoot\AUDITOR_IA.spec"
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller no pudo compilar la aplicacion." }
-
-if (-not (Test-Path $distRoot)) { throw "PyInstaller no genero la carpeta dist." }
-
-Write-Host "DETECTANDO SALIDA DE PYINSTALLER..."
-$generatedExe = Get-ChildItem -Path $distRoot -Filter "AUDITOR_IA.exe" -File -Recurse | Select-Object -First 1
-if (-not $generatedExe) { throw "No se encontro AUDITOR_IA.exe dentro de dist." }
-
-$generatedFolder = $generatedExe.Directory.FullName
-Write-Host "EJECUTABLE ENCONTRADO: $($generatedExe.FullName)"
-Write-Host "CARPETA GENERADA: $generatedFolder"
-
-if ($generatedFolder -ne $portable) {
-    if (Test-Path $portable) { Remove-Item $portable -Recurse -Force }
-
-    if ($generatedFolder -ne $distRoot) {
-        Move-Item -Path $generatedFolder -Destination $portable
-    }
-    else {
-        $temporary = Join-Path $PSScriptRoot "_portable_temp"
-        if (Test-Path $temporary) { Remove-Item $temporary -Recurse -Force }
-        New-Item -ItemType Directory -Path $temporary -Force | Out-Null
-        Get-ChildItem $distRoot | Move-Item -Destination $temporary
-        Move-Item -Path $temporary -Destination $portable
-    }
-}
-
-if (-not (Test-Path $portable)) { throw "No fue posible preparar la carpeta portable: $portable" }
-if (-not (Test-Path (Join-Path $portable "AUDITOR_IA.exe"))) { throw "La carpeta portable no contiene AUDITOR_IA.exe." }
-
-# ------------------------------------------------------------
-# REFUERZO DE RUNTIME QT / PYSIDE6
-# ------------------------------------------------------------
-# PyInstaller debe incluir estos paquetes por hooks, pero para una distribución
-# robusta verificamos el entorno de build y copiamos explícitamente el runtime
-# real de PySide6 y shiboken6 dentro de _internal si es necesario.
-
-Write-Host "VERIFICANDO PYSIDE6 EN EL ENTORNO DE BUILD..."
-
-python -c "import PySide6, shiboken6; print('PySide6:', PySide6.__version__); print('PySide6 path:', PySide6.__file__); print('shiboken6 path:', shiboken6.__file__)"
-if ($LASTEXITCODE -ne 0) {
-    throw "PySide6 o shiboken6 no estan disponibles en el entorno de compilacion."
-}
-
-$internalRoot = Join-Path $portable "_internal"
-New-Item -ItemType Directory -Path $internalRoot -Force | Out-Null
-
-$pySidePath = (
-    python -c "import PySide6, pathlib; print(pathlib.Path(PySide6.__file__).resolve().parent)"
-).Trim()
-
-$shibokenPath = (
-    python -c "import shiboken6, pathlib; print(pathlib.Path(shiboken6.__file__).resolve().parent)"
-).Trim()
-
-if (-not (Test-Path $pySidePath)) {
-    throw "No se encontro la carpeta fisica de PySide6: $pySidePath"
-}
-
-if (-not (Test-Path $shibokenPath)) {
-    throw "No se encontro la carpeta fisica de shiboken6: $shibokenPath"
-}
-
-$pySideTarget = Join-Path $internalRoot "PySide6"
-$shibokenTarget = Join-Path $internalRoot "shiboken6"
-
-Write-Host "COPIANDO RUNTIME PYSIDE6..."
-Write-Host "ORIGEN: $pySidePath"
-Write-Host "DESTINO: $pySideTarget"
-
-if (Test-Path $pySideTarget) {
-    Remove-Item $pySideTarget -Recurse -Force
-}
-
-Copy-Item `
-    -Path $pySidePath `
-    -Destination $pySideTarget `
-    -Recurse `
-    -Force
-
-Write-Host "COPIANDO RUNTIME SHIBOKEN6..."
-Write-Host "ORIGEN: $shibokenPath"
-Write-Host "DESTINO: $shibokenTarget"
-
-if (Test-Path $shibokenTarget) {
-    Remove-Item $shibokenTarget -Recurse -Force
-}
-
-Copy-Item `
-    -Path $shibokenPath `
-    -Destination $shibokenTarget `
-    -Recurse `
-    -Force
-
-$qtCore = Get-ChildItem `
-    -Path $pySideTarget `
-    -Filter "QtCore*.pyd" `
-    -File `
-    -Recurse |
-    Select-Object -First 1
-
-$qtWidgets = Get-ChildItem `
-    -Path $pySideTarget `
-    -Filter "QtWidgets*.pyd" `
-    -File `
-    -Recurse |
-    Select-Object -First 1
-
-if (-not $qtCore) {
-    throw "El runtime copiado de PySide6 no contiene QtCore."
-}
-
-if (-not $qtWidgets) {
-    throw "El runtime copiado de PySide6 no contiene QtWidgets."
-}
-
-Write-Host "PYSIDE6 RUNTIME: LISTO"
-Write-Host "QTCORE: $($qtCore.FullName)"
-Write-Host "QTWIDGETS: $($qtWidgets.FullName)"
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller fallo." }
+if (-not (Test-Path "$portable\AUDITOR_IA.exe")) { throw "No se genero AUDITOR_IA.exe." }
 
 foreach ($folder in @("models","config","data","exports","logs","recordings","temp","engines")) {
     New-Item -ItemType Directory -Path (Join-Path $portable $folder) -Force | Out-Null
 }
 
-Write-Host "COPIANDO MODELOS OFFLINE..."
 Copy-Item $baseModel (Join-Path $portable "models\base") -Recurse -Force
 Copy-Item $smallModel (Join-Path $portable "models\small") -Recurse -Force
 Copy-Item $voiceModel (Join-Path $portable "models\pyannote-community-1") -Recurse -Force
+
+$ffmpegTarget = Join-Path $portable "ffmpeg\bin"
+New-Item -ItemType Directory -Path $ffmpegTarget -Force | Out-Null
+Get-ChildItem $ffmpegSource -File | Copy-Item -Destination $ffmpegTarget -Force
+
+foreach ($pattern in @("avcodec-*.dll","avformat-*.dll","avutil-*.dll","swresample-*.dll")) {
+    if (-not (Get-ChildItem $ffmpegTarget -Filter $pattern -File)) {
+        throw "FFmpeg empaquetado incompleto: $pattern"
+    }
+}
 
 if (Test-Path "$PSScriptRoot\config\settings.json") {
     Copy-Item "$PSScriptRoot\config\settings.json" "$portable\config\settings.json" -Force
@@ -188,60 +65,30 @@ if (Test-Path "$PSScriptRoot\ATTRIBUTIONS.md") {
     Copy-Item "$PSScriptRoot\ATTRIBUTIONS.md" "$portable\ATTRIBUTIONS.md" -Force
 }
 
-$portableBytes = (Get-ChildItem $portable -Recurse -File | Measure-Object -Property Length -Sum).Sum
-$portableGB = [Math]::Round($portableBytes / 1GB, 2)
-Write-Host "TAMANO PORTABLE SIN COMPRIMIR: $portableGB GB"
-
-$sevenZipCandidates = @("C:\Program Files\7-Zip\7z.exe","C:\Program Files (x86)\7-Zip\7z.exe")
-$sevenZip = $sevenZipCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $sevenZip) {
-    $sevenZipCommand = Get-Command 7z.exe -ErrorAction SilentlyContinue
-    if ($sevenZipCommand) { $sevenZip = $sevenZipCommand.Source }
-}
-if (-not $sevenZip) { throw "No se encontro 7-Zip en el runner." }
-
-$portableZip = Join-Path $releaseRoot "AUDITOR_IA_${version}_Portable.zip"
-if (Test-Path $portableZip) { Remove-Item $portableZip -Force }
-
+$sevenZip = "C:\Program Files\7-Zip\7z.exe"
+if (-not (Test-Path $sevenZip)) { throw "7-Zip no instalado." }
+$portableZip = Join-Path $releaseRoot "AUDITOR_IA_6.1.1_Portable.zip"
 Push-Location $portable
 & $sevenZip a -tzip -mx=5 -mmt=on $portableZip ".\*"
 $zipExit = $LASTEXITCODE
 Pop-Location
-
-if ($zipExit -ne 0) { throw "7-Zip no pudo generar el archivo portable. Codigo: $zipExit" }
-if (-not (Test-Path $portableZip)) { throw "No se genero el ZIP portable." }
-
-$portableZipBytes = (Get-Item $portableZip).Length
-$portableZipGB = [Math]::Round($portableZipBytes / 1GB, 2)
-$githubLimit = 2GB
-
-Write-Host "PORTABLE ZIP: $portableZipGB GB"
-if ($portableZipBytes -ge $githubLimit) { throw "El Portable ZIP pesa $portableZipGB GB y supera el limite de 2 GiB de GitHub Releases." }
+if ($zipExit -ne 0) { throw "7-Zip fallo." }
 
 $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $iscc)) { throw "No se encontro Inno Setup: $iscc" }
-
+if (-not (Test-Path $iscc)) { throw "Inno Setup no instalado." }
 & $iscc "$PSScriptRoot\installer\AUDITOR_IA.iss"
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup no pudo generar el instalador." }
+if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo." }
 
-$setupFile = Join-Path $releaseRoot "AUDITOR_IA_${version}_Setup.exe"
-if (-not (Test-Path $setupFile)) {
-    Write-Host "ARCHIVOS PRESENTES EN RELEASE:"
-    Get-ChildItem $releaseRoot | Select-Object Name, Length
-    throw "No se genero el instalador esperado: $setupFile"
+$setup = Join-Path $releaseRoot "AUDITOR_IA_6.1.1_Setup.exe"
+if (-not (Test-Path $portableZip)) { throw "Portable no generado." }
+if (-not (Test-Path $setup)) { throw "Setup no generado." }
+
+$limit = 2GB
+foreach ($file in @($portableZip, $setup)) {
+    $bytes = (Get-Item $file).Length
+    $gb = [Math]::Round($bytes / 1GB, 2)
+    Write-Host "$(Split-Path $file -Leaf): $gb GB"
+    if ($bytes -ge $limit) { throw "$(Split-Path $file -Leaf) supera 2 GiB." }
 }
 
-$setupBytes = (Get-Item $setupFile).Length
-$setupGB = [Math]::Round($setupBytes / 1GB, 2)
-Write-Host "SETUP EXE: $setupGB GB"
-
-if ($setupBytes -ge $githubLimit) { throw "El Setup pesa $setupGB GB y supera el limite de 2 GiB de GitHub Releases." }
-
-Write-Host ""
-Write-Host "=============================================="
-Write-Host "BUILD COMPLETADO CORRECTAMENTE"
-Write-Host "VERSION: $version"
-Write-Host "PORTABLE: $portableZipGB GB"
-Write-Host "SETUP: $setupGB GB"
-Write-Host "=============================================="
-Get-ChildItem $releaseRoot | Select-Object Name, Length
+Write-Host "BUILD COMPLETADO."
