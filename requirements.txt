@@ -7,5 +7,5 @@ python-docx==1.1.2
 numpy==2.2.2
 SoundCard==0.4.4
 sounddevice==0.5.1
-pyannote.audio==4.0.3
-torchcodec==0.7.0
+pyannote.audio==4.0.7
+torchcodec==0.9.1

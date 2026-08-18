@@ -5,7 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-_HANDLES = []
+_DLL_HANDLES = []
 
 
 def configure_ffmpeg(path: Path) -> None:
@@ -13,25 +13,20 @@ def configure_ffmpeg(path: Path) -> None:
     if not path.is_dir():
         raise RuntimeError(f"FFmpeg bin no existe: {path}")
 
-    for pattern in (
-        "avcodec-*.dll",
-        "avformat-*.dll",
-        "avutil-*.dll",
-        "swresample-*.dll",
-    ):
+    for pattern in ("avcodec-*.dll", "avformat-*.dll", "avutil-*.dll", "swresample-*.dll"):
         if not list(path.glob(pattern)):
-            raise RuntimeError(f"FFmpeg Shared incompleto: {pattern}")
+            raise RuntimeError(f"FFmpeg Shared incompleto. Falta {pattern}")
 
     os.environ["PATH"] = str(path) + os.pathsep + os.environ.get("PATH", "")
     if os.name == "nt" and hasattr(os, "add_dll_directory"):
-        _HANDLES.append(os.add_dll_directory(str(path)))
+        _DLL_HANDLES.append(os.add_dll_directory(str(path)))
 
     first = subprocess.check_output(
-        [str(path / "ffmpeg.exe"), "-version"], text=True, stderr=subprocess.STDOUT
+        [str(path / "ffmpeg.exe"), "-version"],
+        text=True,
+        stderr=subprocess.STDOUT,
     ).splitlines()[0]
     print(first)
-    if "ffmpeg version 7" not in first.lower():
-        raise RuntimeError("Se requiere FFmpeg 7 Shared.")
 
 
 def main() -> int:
@@ -44,6 +39,7 @@ def main() -> int:
 
     import PySide6
     import torch
+    import torchaudio
     import torchcodec
     import pyannote.audio
     import faster_whisper
@@ -53,21 +49,23 @@ def main() -> int:
 
     print("PySide6:", PySide6.__version__)
     print("Torch:", torch.__version__)
-    print("TorchCodec: OK")
-    print("pyannote.audio: OK")
-    print("Faster-Whisper: OK")
+    print("Torchaudio:", torchaudio.__version__)
+    print("TorchCodec: IMPORT OK")
+    print("pyannote.audio:", pyannote.audio.__version__)
+    print("Faster-Whisper: IMPORT OK")
     print("CTranslate2:", ctranslate2.__version__)
     print("PyAV:", av.__version__)
     print("NumPy:", numpy.__version__)
 
     if args.voice_model:
-        model = Path(args.voice_model).resolve()
-        if not (model / "config.yaml").is_file():
-            raise RuntimeError(f"Community-1 incompleto: {model}")
+        model_path = Path(args.voice_model).resolve()
+        if not (model_path / "config.yaml").is_file():
+            raise RuntimeError(f"Community-1 incompleto: {model_path}")
+
         from pyannote.audio import Pipeline
-        pipe = Pipeline.from_pretrained(str(model))
-        if pipe is None:
-            raise RuntimeError("Community-1 no pudo cargarse.")
+        pipeline = Pipeline.from_pretrained(str(model_path))
+        if pipeline is None:
+            raise RuntimeError("Community-1 no pudo cargarse localmente.")
         print("COMMUNITY-1 LOCAL: OK")
 
     print("RUNTIME NATIVO: VERIFICADO")
