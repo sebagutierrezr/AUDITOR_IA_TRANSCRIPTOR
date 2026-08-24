@@ -77,7 +77,7 @@ class MainWindow(QMainWindow):
 
         brand = QLabel("AUDITOR IA\nTRANSCRIPTOR")
         brand.setObjectName("BrandTitle")
-        version = QLabel("VERSIÓN 6.1.1")
+        version = QLabel("VERSIÓN 6.1.3 · SPEAKER V2")
         version.setObjectName("BrandVersion")
         side_layout.addWidget(brand)
         side_layout.addWidget(version)

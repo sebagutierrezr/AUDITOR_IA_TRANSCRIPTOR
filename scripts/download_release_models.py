@@ -7,12 +7,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 
-ROOT = Path(
-    os.environ.get(
-        "AUDITOR_IA_PROJECT_ROOT",
-        str(Path.cwd()),
-    )
-).resolve()
+ROOT = Path(__file__).resolve().parents[1]
 MODELS = ROOT / "models"
 
 TRANSCRIPTION_MODELS = {

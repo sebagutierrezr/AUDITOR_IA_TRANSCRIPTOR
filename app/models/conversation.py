@@ -9,6 +9,10 @@ class Segment:
     speaker: str = "HABLANTE"
     confidence: float | None = None
 
+    # Metadatos internos para alinear palabras con cambios de hablante.
+    # La UI y las exportaciones siguen utilizando Segment.text normalmente.
+    words: list[dict] = field(default_factory=list)
+
 
 @dataclass
 class Conversation:

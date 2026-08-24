@@ -1,4 +1,4 @@
-# AUDITOR IA 6.1.1
+# AUDITOR IA 6.1.0
 
 Versión enfocada en la calidad de identificación Agente/Cliente.
 
@@ -28,6 +28,6 @@ Community-1 requiere aceptar sus condiciones y usar un token de Hugging Face.
 2. Crear un token de lectura en Hugging Face.
 3. En GitHub: Settings > Secrets and variables > Actions.
 4. Crear el secreto `HF_TOKEN`.
-5. Ejecutar el workflow o crear el tag `v6.1.1`.
+5. Ejecutar el workflow o crear el tag `v6.1.0`.
 
 El token solo se usa durante la compilación. No queda dentro del instalador.

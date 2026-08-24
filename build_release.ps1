@@ -1,7 +1,7 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$version = "6.1.1"
+$version = "6.1.3"
 $env:AUDITOR_IA_PROJECT_ROOT = $PSScriptRoot
 
 if (-not $env:AUDITOR_IA_FFMPEG_BIN) {
@@ -14,7 +14,7 @@ $baseModel = Join-Path $modelsRoot "base"
 $smallModel = Join-Path $modelsRoot "small"
 $voiceModel = Join-Path $modelsRoot "pyannote-community-1"
 $distRoot = Join-Path $PSScriptRoot "dist"
-$portable = Join-Path $distRoot "AUDITOR_IA_6.1.1_PORTABLE"
+$portable = Join-Path $distRoot "AUDITOR_IA_6.1.3_PORTABLE"
 $releaseRoot = Join-Path $PSScriptRoot "release"
 
 if (Test-Path "build") { Remove-Item "build" -Recurse -Force }
@@ -71,7 +71,7 @@ foreach ($pattern in @("avcodec-*.dll","avformat-*.dll","avutil-*.dll","swresamp
 
 $sevenZip = "C:\Program Files\7-Zip\7z.exe"
 if (-not (Test-Path $sevenZip)) { throw "7-Zip no instalado." }
-$portableZip = Join-Path $releaseRoot "AUDITOR_IA_6.1.1_Portable.zip"
+$portableZip = Join-Path $releaseRoot "AUDITOR_IA_6.1.3_Portable.zip"
 
 Push-Location $portable
 & $sevenZip a -tzip -mx=5 -mmt=on $portableZip ".\*"
@@ -84,7 +84,7 @@ if (-not (Test-Path $iscc)) { throw "Inno Setup no instalado." }
 & $iscc "$PSScriptRoot\installer\AUDITOR_IA.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo." }
 
-$setup = Join-Path $releaseRoot "AUDITOR_IA_6.1.1_Setup.exe"
+$setup = Join-Path $releaseRoot "AUDITOR_IA_6.1.3_Setup.exe"
 if (-not (Test-Path $portableZip)) { throw "Portable no generado." }
 if (-not (Test-Path $setup)) { throw "Setup no generado." }
 

@@ -1,5 +1,5 @@
 #define MyAppName "AUDITOR IA"
-#define MyAppVersion "6.1.1"
+#define MyAppVersion "6.1.3"
 #define MyAppPublisher "AUDITOR IA"
 #define MyAppExeName "AUDITOR_IA.exe"
 
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\AUDITOR IA
 DefaultGroupName=AUDITOR IA
 DisableProgramGroupPage=yes
 OutputDir=..\release
-OutputBaseFilename=AUDITOR_IA_6.1.1_Setup
+OutputBaseFilename=AUDITOR_IA_6.1.3_Setup
 SetupIconFile=..\resources\logo.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
@@ -23,7 +23,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 
 [Files]
-Source: "..\dist\AUDITOR_IA_6.1.1_PORTABLE\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\AUDITOR_IA_6.1.3_PORTABLE\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\AUDITOR IA"; Filename: "{app}\{#MyAppExeName}"

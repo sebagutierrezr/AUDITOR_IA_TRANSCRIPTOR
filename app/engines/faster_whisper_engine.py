@@ -81,7 +81,6 @@ class FasterWhisperEngine(SpeechEngine):
             parts.append(
                 "LISTOS: " + ", ".join(ready)
             )
-
         if missing:
             parts.append(
                 "NO DISPONIBLES: " + ", ".join(missing)
@@ -122,7 +121,7 @@ class FasterWhisperEngine(SpeechEngine):
                 message = (
                     f"EL MODELO {self._model_name.upper()} "
                     "NO ESTÁ INSTALADO O ESTÁ INCOMPLETO. "
-                    "REINSTALA AUDITOR IA 6.0.1."
+                    "REINSTALA AUDITOR IA 6.1.3."
                 )
                 self._logger.error(message)
                 raise RuntimeError(message)
@@ -187,13 +186,12 @@ class FasterWhisperEngine(SpeechEngine):
             if language == "AUTO"
             else language.lower()
         )
-        beam_size = 5
 
         segments_iter, info = model.transcribe(
             str(audio_path),
             language=language_code,
             task="transcribe",
-            beam_size=beam_size,
+            beam_size=5,
             best_of=5,
             vad_filter=False,
             vad_parameters={
@@ -205,12 +203,17 @@ class FasterWhisperEngine(SpeechEngine):
             no_speech_threshold=0.55,
             compression_ratio_threshold=2.4,
             log_prob_threshold=-1.0,
-            word_timestamps=False,
+
+            # CLAVE SPEAKER V2:
+            # conservar tiempos por palabra para que una frase de Whisper que
+            # contenga a ambos participantes pueda separarse después.
+            word_timestamps=True,
         )
 
         duration = float(
             getattr(info, "duration", 0.0) or 0.0
         )
+
         segments: list[Segment] = []
 
         for item in segments_iter:
@@ -219,20 +222,60 @@ class FasterWhisperEngine(SpeechEngine):
             if not text:
                 continue
 
+            raw_words = []
+            for word in (getattr(item, "words", None) or []):
+                word_text = str(
+                    getattr(word, "word", "") or ""
+                )
+                if not word_text.strip():
+                    continue
+
+                if uppercase:
+                    word_text = word_text.upper()
+
+                raw_words.append(
+                    {
+                        "start": float(
+                            getattr(word, "start", item.start)
+                        ),
+                        "end": float(
+                            getattr(word, "end", item.end)
+                        ),
+                        "text": word_text,
+                        "probability": float(
+                            getattr(word, "probability", 0.0) or 0.0
+                        ),
+                    }
+                )
+
             if uppercase:
                 text = text.upper()
 
+            display_text = text
+
             if show_timestamps:
-                text = (
+                display_text = (
                     f"[{self._format_time(item.start)} - "
-                    f"{self._format_time(item.end)}] {text}"
+                    f"{self._format_time(item.end)}] {display_text}"
                 )
+
+            confidence = None
+            if raw_words:
+                probabilities = [
+                    float(word["probability"])
+                    for word in raw_words
+                    if word.get("probability") is not None
+                ]
+                if probabilities:
+                    confidence = sum(probabilities) / len(probabilities)
 
             segments.append(
                 Segment(
                     start=float(item.start),
                     end=float(item.end),
-                    text=text,
+                    text=display_text,
+                    confidence=confidence,
+                    words=raw_words,
                 )
             )
 
@@ -298,6 +341,8 @@ class FasterWhisperEngine(SpeechEngine):
             no_speech_threshold=0.58,
             compression_ratio_threshold=2.35,
             log_prob_threshold=-1.0,
+
+            # En vivo no necesita el coste adicional de alineación por palabra.
             word_timestamps=False,
         )
 
