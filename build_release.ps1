@@ -1,99 +1,56 @@
 ﻿$ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$version = "6.1.3"
-$env:AUDITOR_IA_PROJECT_ROOT = $PSScriptRoot
-
-if (-not $env:AUDITOR_IA_FFMPEG_BIN) {
-    throw "AUDITOR_IA_FFMPEG_BIN no esta configurado."
-}
-
-$ffmpegSource = $env:AUDITOR_IA_FFMPEG_BIN
-$modelsRoot = Join-Path $PSScriptRoot "models"
-$baseModel = Join-Path $modelsRoot "base"
-$smallModel = Join-Path $modelsRoot "small"
-$voiceModel = Join-Path $modelsRoot "pyannote-community-1"
+$version = "7.0.0"
 $distRoot = Join-Path $PSScriptRoot "dist"
-$portable = Join-Path $distRoot "AUDITOR_IA_6.1.3_PORTABLE"
+$appFolder = Join-Path $distRoot "AUDITOR_IA_7.0.0_APP"
 $releaseRoot = Join-Path $PSScriptRoot "release"
+$setup = Join-Path $releaseRoot "AUDITOR_IA_7.0.0_Setup.exe"
 
 if (Test-Path "build") { Remove-Item "build" -Recurse -Force }
 if (Test-Path $distRoot) { Remove-Item $distRoot -Recurse -Force }
 if (Test-Path $releaseRoot) { Remove-Item $releaseRoot -Recurse -Force }
-
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
-New-Item -ItemType Directory -Path $modelsRoot -Force | Out-Null
 
-Write-Host "DESCARGANDO / VERIFICANDO MODELOS..."
-python "$PSScriptRoot\scripts\download_release_models.py"
-if ($LASTEXITCODE -ne 0) { throw "Fallo descarga/verificacion de modelos." }
+Write-Host "========================================="
+Write-Host " AUDITOR IA 7.0.0 - WINDOWS INSTALLER"
+Write-Host "========================================="
+Write-Host "Build ligero de alta precisión. Solo instalador Windows."
 
-Write-Host "VERIFICANDO STACK DE AUDIO + COMMUNITY-1..."
-python "$PSScriptRoot\scripts\verify_native_runtime.py" `
-    --ffmpeg-bin "$ffmpegSource" `
-    --voice-model "$voiceModel"
-if ($LASTEXITCODE -ne 0) { throw "Runtime/modelos no validos." }
+Write-Host "[1/4] Ejecutando pruebas..."
+python -m unittest discover -s tests -p "test_*.py" -v
+if ($LASTEXITCODE -ne 0) { throw "Las pruebas fallaron." }
 
-Write-Host "COMPILANDO..."
+Write-Host "[2/4] Compilando aplicación..."
 python -m PyInstaller --clean --noconfirm "$PSScriptRoot\AUDITOR_IA.spec"
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller fallo." }
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller falló." }
 
-$exe = Join-Path $portable "AUDITOR_IA.exe"
-if (-not (Test-Path $exe)) { throw "No se genero AUDITOR_IA.exe." }
+$exe = Join-Path $appFolder "AUDITOR_IA.exe"
+if (-not (Test-Path $exe)) { throw "No se generó AUDITOR_IA.exe." }
 
-foreach ($folder in @("models","config","data","exports","logs","recordings","temp","engines")) {
-    New-Item -ItemType Directory -Path (Join-Path $portable $folder) -Force | Out-Null
+Write-Host "[3/4] Self-test del EXE real..."
+$env:AUDITOR_IA_SELF_TEST = "1"
+$process = Start-Process -FilePath $exe -WorkingDirectory $appFolder -Wait -PassThru
+Remove-Item Env:AUDITOR_IA_SELF_TEST
+if ($process.ExitCode -ne 0) {
+    $errorFile = Join-Path $appFolder "runtime_self_test_error.txt"
+    if (Test-Path $errorFile) { Get-Content $errorFile }
+    throw "El EXE no superó el self-test. ExitCode=$($process.ExitCode)"
 }
+$okFile = Join-Path $appFolder "runtime_self_test_ok.txt"
+if (Test-Path $okFile) { Get-Content $okFile }
 
-Copy-Item $baseModel (Join-Path $portable "models\base") -Recurse -Force
-Copy-Item $smallModel (Join-Path $portable "models\small") -Recurse -Force
-Copy-Item $voiceModel (Join-Path $portable "models\pyannote-community-1") -Recurse -Force
+Write-Host "[4/4] Creando instalador..."
+$isccCandidates = @(
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe"
+)
+$iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $iscc) { throw "Inno Setup 6 no está instalado." }
 
-if (Test-Path "$PSScriptRoot\config\settings.json") {
-    Copy-Item "$PSScriptRoot\config\settings.json" "$portable\config\settings.json" -Force
-}
-if (Test-Path "$PSScriptRoot\config\defaults.json") {
-    Copy-Item "$PSScriptRoot\config\defaults.json" "$portable\config\defaults.json" -Force
-}
-
-Write-Host "COPIANDO FFMPEG SHARED..."
-$ffmpegTarget = Join-Path $portable "ffmpeg\bin"
-New-Item -ItemType Directory -Path $ffmpegTarget -Force | Out-Null
-Get-ChildItem $ffmpegSource -File | Where-Object {
-    $_.Extension -ieq ".dll" -or $_.Name -ieq "ffmpeg.exe" -or $_.Name -ieq "ffprobe.exe"
-} | Copy-Item -Destination $ffmpegTarget -Force
-
-foreach ($pattern in @("avcodec-*.dll","avformat-*.dll","avutil-*.dll","swresample-*.dll")) {
-    if (-not (Get-ChildItem $ffmpegTarget -Filter $pattern -File)) {
-        throw "FFmpeg empaquetado incompleto: $pattern"
-    }
-}
-
-$sevenZip = "C:\Program Files\7-Zip\7z.exe"
-if (-not (Test-Path $sevenZip)) { throw "7-Zip no instalado." }
-$portableZip = Join-Path $releaseRoot "AUDITOR_IA_6.1.3_Portable.zip"
-
-Push-Location $portable
-& $sevenZip a -tzip -mx=5 -mmt=on $portableZip ".\*"
-$zipExit = $LASTEXITCODE
-Pop-Location
-if ($zipExit -ne 0) { throw "7-Zip fallo." }
-
-$iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $iscc)) { throw "Inno Setup no instalado." }
 & $iscc "$PSScriptRoot\installer\AUDITOR_IA.iss"
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo." }
+if ($LASTEXITCODE -ne 0) { throw "Inno Setup falló." }
+if (-not (Test-Path $setup)) { throw "No se generó $setup" }
 
-$setup = Join-Path $releaseRoot "AUDITOR_IA_6.1.3_Setup.exe"
-if (-not (Test-Path $portableZip)) { throw "Portable no generado." }
-if (-not (Test-Path $setup)) { throw "Setup no generado." }
-
-$limit = 2GB
-foreach ($file in @($portableZip, $setup)) {
-    $bytes = (Get-Item $file).Length
-    $gb = [Math]::Round($bytes / 1GB, 2)
-    Write-Host "$(Split-Path $file -Leaf): $gb GB"
-    if ($bytes -ge $limit) { throw "$(Split-Path $file -Leaf) supera 2 GiB." }
-}
-
-Write-Host "BUILD COMPLETADO."
+$sizeMb = [Math]::Round((Get-Item $setup).Length / 1MB, 1)
+Write-Host "INSTALADOR LISTO: AUDITOR_IA_7.0.0_Setup.exe ($sizeMb MB)"

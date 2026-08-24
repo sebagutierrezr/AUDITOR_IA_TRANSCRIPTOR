@@ -1,209 +1,116 @@
-from pathlib import Path
-import sys
+from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
     QStackedWidget,
+    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
 
-from app.engines.faster_whisper_engine import FasterWhisperEngine
 from app.services.config_service import ConfigService
-from app.services.history_service import HistoryService
 from app.ui.pages.files_page import FilesPage
 from app.ui.pages.history_page import HistoryPage
-from app.ui.pages.home_page import HomePage
-from app.ui.pages.live_page import LivePage
 from app.ui.pages.settings_page import SettingsPage
-from app.ui.styles import APP_STYLE
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, config_service: ConfigService):
+    VERSION = "7.0.0"
+
+    def __init__(self, config_service: ConfigService) -> None:
         super().__init__()
-        self._config_service = config_service
-        self._history_service = HistoryService()
-        self._engine = FasterWhisperEngine(
-            config_service.load().file_profile
-        )
-
+        self._config = config_service
         self.setWindowTitle("AUDITOR IA - TRANSCRIPTOR")
-        self.setMinimumSize(1100, 700)
-        self.resize(1280, 780)
-        self.setStyleSheet(APP_STYLE)
+        self.resize(1380, 860)
+        self.setMinimumSize(1080, 700)
 
-        resource_root = (
-            Path(getattr(sys, "_MEIPASS"))
-            if getattr(sys, "frozen", False)
-            else Path(__file__).resolve().parents[2]
-        )
-        icon = resource_root / "resources" / "logo.svg"
-        self.setWindowIcon(QIcon(str(icon)))
-        self._stack = QStackedWidget()
-        self._status_label = QLabel("ESTADO: LISTO")
-        self._performance_label = QLabel("CPU: -- % | RAM: -- MB")
-        self._build(icon)
-        self._start_monitor()
+        root = QWidget()
+        root.setObjectName("Root")
+        self.setCentralWidget(root)
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-    def _build(self, icon: Path) -> None:
-        central = QWidget()
-        root = QHBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        sidebar = QFrame()
+        sidebar.setObjectName("Sidebar")
+        sidebar.setFixedWidth(214)
+        side = QVBoxLayout(sidebar)
+        side.setContentsMargins(12, 20, 12, 18)
+        side.setSpacing(6)
 
-        side = QWidget()
-        side.setObjectName("Sidebar")
-        side.setFixedWidth(250)
-        side_layout = QVBoxLayout(side)
-        side_layout.setContentsMargins(20, 22, 20, 22)
-        side_layout.setSpacing(8)
+        brand = QLabel("AUDITOR IA")
+        brand.setObjectName("Brand")
+        side.addWidget(brand)
+        product = QLabel("TRANSCRIPTOR")
+        product.setObjectName("Product")
+        side.addWidget(product)
 
-        logo = QLabel()
-        logo.setPixmap(
-            QPixmap(str(icon)).scaled(
-                54,
-                54,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-        )
-        side_layout.addWidget(logo)
+        online = QLabel("●  ALTA PRECISIÓN ONLINE")
+        online.setObjectName("OnlineBadge")
+        side.addWidget(online)
+        side.addSpacing(18)
 
-        brand = QLabel("AUDITOR IA\nTRANSCRIPTOR")
-        brand.setObjectName("BrandTitle")
-        version = QLabel("VERSIÓN 6.1.3 · SPEAKER V2")
-        version.setObjectName("BrandVersion")
-        side_layout.addWidget(brand)
-        side_layout.addWidget(version)
-        side_layout.addSpacing(22)
+        self.stack = QStackedWidget()
+        self.files_page = FilesPage(config_service)
+        self.history_page = HistoryPage()
+        self.settings_page = SettingsPage(config_service)
+        self.pages = [self.files_page, self.history_page, self.settings_page]
+        for page in self.pages:
+            self.stack.addWidget(page)
 
-        self._files_page = FilesPage(
-            self._config_service,
-            self._engine,
-            self._history_service,
-        )
-        self._history_page = HistoryPage(self._history_service)
-        self._live_page = LivePage(
-            self._config_service,
-            self._engine,
-            self._history_service,
-        )
-        settings = SettingsPage(self._config_service)
-        self._home_page = HomePage(
-            self._config_service,
-            self._history_service,
-        )
-
-        self._files_page.status_changed.connect(self._set_status)
-        self._files_page.history_changed.connect(
-            self._history_page.refresh
-        )
-        self._files_page.history_changed.connect(
-            self._home_page.refresh
-        )
-        self._live_page.status_changed.connect(self._set_status)
-        self._live_page.history_changed.connect(
-            self._history_page.refresh
-        )
-        self._live_page.history_changed.connect(
-            self._home_page.refresh
-        )
-        self._history_page.status_changed.connect(self._set_status)
-        self._history_page.open_requested.connect(
-            self._open_history_entry
-        )
-        settings.status_changed.connect(self._set_status)
-        settings.profile_changed.connect(self._engine.set_profile)
-
-        self._home_page.open_files_requested.connect(
-            lambda: self._select(1)
-        )
-        self._home_page.open_history_requested.connect(
-            lambda: self._select(2)
-        )
-        self._home_page.open_live_requested.connect(
-            lambda: self._select(3)
-        )
-
-        pages = [
-            ("INICIO", self._home_page),
-            ("ARCHIVOS", self._files_page),
-            ("HISTORIAL", self._history_page),
-            ("EN VIVO", self._live_page),
-            ("CONFIGURACIÓN", settings),
+        nav = [
+            ("TRANSCRIBIR", 0),
+            ("HISTORIAL", 1),
+            ("AJUSTES", 2),
         ]
+        self.nav_buttons = []
+        for text, index in nav:
+            btn = QPushButton(text)
+            btn.setObjectName("NavButton")
+            btn.setProperty("active", index == 0)
+            btn.clicked.connect(lambda checked=False, i=index: self.navigate(i))
+            side.addWidget(btn)
+            self.nav_buttons.append(btn)
 
-        self._buttons = []
-        for index, (name, page) in enumerate(pages):
-            button = QPushButton(name)
-            button.setObjectName("NavButton")
-            button.setCheckable(True)
-            button.clicked.connect(
-                lambda checked=False, page_index=index: self._select(
-                    page_index
-                )
-            )
-            self._buttons.append(button)
-            side_layout.addWidget(button)
-            self._stack.addWidget(page)
+        side.addStretch()
+        version = QLabel(f"VERSIÓN {self.VERSION}\nWINDOWS INSTALLER")
+        version.setObjectName("Version")
+        side.addWidget(version)
 
-        side_layout.addStretch()
+        root_layout.addWidget(sidebar)
+        root_layout.addWidget(self.stack, 1)
 
-        content = QWidget()
-        content.setObjectName("ContentArea")
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.addWidget(self._stack)
+        status = QStatusBar()
+        status.setSizeGripEnabled(False)
+        self.status_label = QLabel("LISTO")
+        status.addWidget(self.status_label)
+        self.setStatusBar(status)
 
-        root.addWidget(side)
-        root.addWidget(content, 1)
-        self.setCentralWidget(central)
-        self.statusBar().addWidget(self._status_label)
-        self.statusBar().addPermanentWidget(
-            self._performance_label
-        )
-        self._select(0)
+        self.files_page.status_changed.connect(self._set_status)
+        self.files_page.history_changed.connect(self.history_page.refresh)
+        self.history_page.status_changed.connect(self._set_status)
+        self.history_page.open_entry.connect(self._open_history)
+        self.settings_page.status_changed.connect(self._set_status)
 
-    def _open_history_entry(self, entry: dict) -> None:
-        self._files_page.load_history_entry(entry)
-        self._select(1)
+    def navigate(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        for i, btn in enumerate(self.nav_buttons):
+            btn.setProperty("active", i == index)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        page = self.pages[index]
+        if hasattr(page, "refresh"):
+            page.refresh()
 
-    def _select(self, index: int) -> None:
-        if index == 0:
-            self._home_page.refresh()
-        if index == 3:
-            self._live_page.refresh_labels()
-        self._stack.setCurrentIndex(index)
-        for button_index, button in enumerate(self._buttons):
-            button.setChecked(button_index == index)
+    def _open_history(self, entry: dict) -> None:
+        self.files_page.load_history_entry(entry)
+        self.navigate(0)
+        self._set_status("TRANSCRIPCIÓN CARGADA DESDE HISTORIAL")
 
     def _set_status(self, message: str) -> None:
-        self._status_label.setText(
-            f"ESTADO: {message.upper()}"
-        )
-
-    def _start_monitor(self) -> None:
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._update)
-        self._timer.start(1500)
-
-    def _update(self) -> None:
-        try:
-            import os
-            import psutil
-
-            process = psutil.Process(os.getpid())
-            self._performance_label.setText(
-                f"CPU: {process.cpu_percent():.1f} % | "
-                f"RAM: {process.memory_info().rss / (1024 * 1024):.0f} MB"
-            )
-        except Exception:
-            self._performance_label.setText(
-                "CPU: N/D | RAM: N/D"
-            )
+        self.status_label.setText(message)

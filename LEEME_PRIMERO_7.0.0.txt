@@ -1,0 +1,50 @@
+AUDITOR IA - TRANSCRIPTOR 7.0.0
+ALTA PRECISIÓN · WINDOWS INSTALLER
+=================================
+
+ESTA ES UNA VERSIÓN NUEVA DEL MOTOR DE ARCHIVOS.
+
+OBJETIVO
+--------
+Priorizar la identificación correcta de hablantes para que el futuro AUDITOR
+pueda evaluar exclusivamente lo que dijo el AGENTE y lo que respondió el CLIENTE.
+
+CAMBIOS
+-------
+- gpt-4o-transcribe-diarize reemplaza la cadena Whisper + pyannote para archivos.
+- Transcripción y separación de speakers se realizan en la misma operación.
+- Segundo análisis semántico asigna AGENTE / CLIENTE sin asumir quién habló primero.
+- Si solo aparece un hablante, se hace un segundo intento con VAD más sensible.
+- Si siguen sin confirmarse 2 hablantes, el programa NO entrega etiquetas inseguras.
+- Puede cargarse una muestra opcional de 2–10 segundos de la voz del agente.
+- Interfaz simplificada a Transcribir / Historial / Ajustes.
+- Se elimina En Vivo de esta versión.
+- Se eliminan modelos locales, Torch, TorchCodec, FFmpeg y pyannote del instalador.
+- Solo se genera instalador Windows. NO hay Portable.
+
+API KEY
+-------
+Configúrala desde AJUSTES. No la pegues en archivos del repositorio.
+En Windows se guarda cifrada para el usuario actual mediante DPAPI.
+
+IMPORTANTE
+----------
+El modo Alta Precisión necesita Internet y uso de la API de OpenAI.
+La facturación API es independiente de una suscripción de ChatGPT.
+
+ACTUALIZAR EL REPOSITORIO YA CONECTADO
+--------------------------------------
+Copia todo el contenido de esta carpeta sobre tu carpeta Git actual SIN borrar .git.
+
+Luego:
+
+git add -A
+git commit -m "AUDITOR IA 7.0.0 Alta Precision"
+git push origin main
+
+GITHUB
+------
+Actions > Build Windows Installer > Run workflow > main
+
+El único artefacto esperado es:
+AUDITOR_IA_7.0.0_Setup.exe

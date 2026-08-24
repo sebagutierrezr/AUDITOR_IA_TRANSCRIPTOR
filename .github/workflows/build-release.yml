@@ -1,4 +1,4 @@
-name: Build Windows release
+name: Build Windows Installer
 
 on:
   workflow_dispatch:
@@ -12,122 +12,50 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 150
+    timeout-minutes: 60
 
     steps:
       - name: Descargar código
         uses: actions/checkout@v4
 
-      - name: Configurar Python
+      - name: Configurar Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Preparar Micromamba
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          init-shell: powershell
-          cache-environment: false
-
-      - name: Instalar FFmpeg 7 Shared aislado
-        shell: pwsh
-        run: |
-          $prefix = Join-Path $env:GITHUB_WORKSPACE ".ffmpeg7"
-          micromamba create -y -p "$prefix" -c conda-forge "ffmpeg=7.*"
-          if ($LASTEXITCODE -ne 0) { throw "No se pudo instalar FFmpeg 7." }
-
-          $bin = Join-Path $prefix "Library\bin"
-          if (-not (Test-Path "$bin\ffmpeg.exe")) { throw "No se encontró ffmpeg.exe." }
-
-          foreach ($pattern in @("avcodec-*.dll","avformat-*.dll","avutil-*.dll","swresample-*.dll")) {
-            if (-not (Get-ChildItem $bin -Filter $pattern -File)) {
-              throw "FFmpeg Shared incompleto: $pattern"
-            }
-          }
-
-          $line = & "$bin\ffmpeg.exe" -version | Select-Object -First 1
-          Write-Host $line
-
-          "AUDITOR_IA_FFMPEG_BIN=$bin" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          $bin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Instalar PyTorch 2.9 CPU
+      - name: Instalar dependencias
         shell: pwsh
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install torch==2.9.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cpu
-          if ($LASTEXITCODE -ne 0) { throw "PyTorch/Torchaudio 2.9 CPU falló." }
-
-      - name: Instalar dependencias compatibles
-        shell: pwsh
-        run: |
           python -m pip install -r requirements.txt
-          if ($LASTEXITCODE -ne 0) { throw "requirements.txt falló." }
-
+          if ($LASTEXITCODE -ne 0) { throw "Instalación de dependencias falló." }
           python -m pip check
-          if ($LASTEXITCODE -ne 0) { throw "pip check detectó incompatibilidades." }
+          if ($LASTEXITCODE -ne 0) { throw "pip check encontró incompatibilidades." }
 
-      - name: Verificar stack antes de compilar
+      - name: Ejecutar pruebas
         shell: pwsh
         run: |
-          python scripts\verify_native_runtime.py --ffmpeg-bin "$env:AUDITOR_IA_FFMPEG_BIN"
-          if ($LASTEXITCODE -ne 0) { throw "Runtime previo falló." }
-
-      - name: Probar Speaker V2
-        shell: pwsh
-        run: |
-          python -m unittest tests.test_speaker_v2 -v
-          if ($LASTEXITCODE -ne 0) { throw "Speaker V2 falló." }
+          python -m unittest discover -s tests -p "test_*.py" -v
+          if ($LASTEXITCODE -ne 0) { throw "Las pruebas fallaron." }
 
       - name: Instalar herramientas de build
         shell: pwsh
         run: |
           python -m pip install pyinstaller==6.14.2 "pyinstaller-hooks-contrib>=2025.8"
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller falló al instalar." }
-
           choco install innosetup --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup falló." }
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup falló al instalar." }
 
-          choco install 7zip --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw "7-Zip falló." }
-
-      - name: Construir portable e instalador
+      - name: Construir instalador
         shell: pwsh
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: ./build_release.ps1
 
-      - name: Self-test del EXE real
-        shell: pwsh
-        run: |
-          $folder = "dist\AUDITOR_IA_6.1.3_PORTABLE"
-          $exe = Join-Path $folder "AUDITOR_IA.exe"
-
-          if (-not (Test-Path $exe)) { throw "AUDITOR_IA.exe no existe." }
-
-          $env:AUDITOR_IA_SELF_TEST = "1"
-          $process = Start-Process -FilePath $exe -WorkingDirectory $folder -Wait -PassThru
-          Remove-Item Env:AUDITOR_IA_SELF_TEST
-
-          if ($process.ExitCode -ne 0) {
-            $errorFile = Join-Path $folder "runtime_self_test_error.txt"
-            if (Test-Path $errorFile) {
-              Write-Host "ERROR SELF-TEST:"
-              Get-Content $errorFile
-            }
-            throw "SELF-TEST falló. ExitCode=$($process.ExitCode)"
-          }
-
-          Get-Content (Join-Path $folder "runtime_self_test_ok.txt")
-          Write-Host "SELF-TEST DEL EXE: CORRECTO"
-
-      - name: Guardar artefactos
+      - name: Subir instalador
         uses: actions/upload-artifact@v4
         with:
-          name: AUDITOR_IA_6.1.3_Windows
-          path: |
-            release/AUDITOR_IA_6.1.3_Setup.exe
-            release/AUDITOR_IA_6.1.3_Portable.zip
+          name: AUDITOR_IA_7.0.0_Setup
+          path: release/AUDITOR_IA_7.0.0_Setup.exe
           if-no-files-found: error
           compression-level: 0
 
@@ -138,7 +66,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" `
-            "release/AUDITOR_IA_6.1.3_Setup.exe" `
-            "release/AUDITOR_IA_6.1.3_Portable.zip" `
-            --title "AUDITOR IA 6.1.3" `
-            --notes "Build Windows validado con pyannote 4.0.7, Torch 2.9, TorchCodec 0.9.1 y FFmpeg 7 Shared."
+            "release/AUDITOR_IA_7.0.0_Setup.exe" `
+            --title "AUDITOR IA 7.0.0" `
+            --notes "Alta precisión con gpt-4o-transcribe-diarize, identificación semántica AGENTE/CLIENTE e interfaz simplificada. Solo instalador Windows."

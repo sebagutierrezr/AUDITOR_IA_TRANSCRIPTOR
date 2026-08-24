@@ -1,33 +1,52 @@
-# AUDITOR IA 6.1.0
+# AUDITOR IA - TRANSCRIPTOR 7.0.0
 
-Versión enfocada en la calidad de identificación Agente/Cliente.
+Versión Windows enfocada exclusivamente en **transcripción de archivos con alta precisión e identificación AGENTE / CLIENTE**.
 
-## Motores incluidos
+## Cambio principal
 
-- Faster-Whisper Base: perfil Rápido.
-- Faster-Whisper Small: perfil Balanceado.
-- pyannote Community-1: identificación neuronal de voces.
+La versión 7.0.0 deja de usar Faster-Whisper + pyannote como motor principal. Los archivos se procesan con:
 
-Los tres modelos se incluyen en el instalador y en el portable. La aplicación
-no descarga modelos durante el uso.
+- `gpt-4o-transcribe-diarize`: transcripción + diarización integrada.
+- `gpt-5.6-luna`: segunda revisión semántica para decidir qué speaker corresponde a AGENTE y cuál a CLIENTE.
+- Muestra opcional de voz del agente de 2–10 segundos para fijar un hablante conocido cuando esté disponible.
 
-## Identificación
+Si la primera transcripción confirma solo un hablante, el programa hace un segundo intento con VAD más sensible. Si aun así no puede confirmar dos voces, **no inventa etiquetas**: informa que la separación no es segura.
 
-- Audio preparado como WAV mono de 16 kHz.
-- Exactamente dos participantes.
-- El primer participante se asigna según la configuración.
-- Cruce de tiempos por mayor solapamiento.
-- Corrección manual disponible en el panel.
+## Interfaz 7.0
 
-## Requisito para construir en GitHub
+Solo existen tres secciones:
 
-Community-1 requiere aceptar sus condiciones y usar un token de Hugging Face.
+1. **Transcribir**: cargar audio, procesar, corregir etiquetas y exportar.
+2. **Historial**: recuperar transcripciones anteriores.
+3. **Ajustes**: API key, muestra opcional de voz y preferencias.
 
-1. Aceptar condiciones en:
-   `pyannote/speaker-diarization-community-1`
-2. Crear un token de lectura en Hugging Face.
-3. En GitHub: Settings > Secrets and variables > Actions.
-4. Crear el secreto `HF_TOKEN`.
-5. Ejecutar el workflow o crear el tag `v6.1.0`.
+Se eliminaron Inicio, En Vivo, paneles técnicos y opciones que recargaban la interfaz.
 
-El token solo se usa durante la compilación. No queda dentro del instalador.
+## Distribución
+
+Solo se genera:
+
+`AUDITOR_IA_7.0.0_Setup.exe`
+
+No se genera Portable.
+
+## Requisitos de uso
+
+- Windows 10/11 x64.
+- Conexión a Internet.
+- API key de OpenAI con acceso al modelo de transcripción.
+- Facturación/API disponible en la cuenta correspondiente.
+
+La API key se guarda cifrada con Windows DPAPI para el usuario actual. También se admite la variable de entorno `OPENAI_API_KEY`.
+
+## GitHub
+
+```bat
+git add -A
+git commit -m "AUDITOR IA 7.0.0 Alta Precision"
+git push origin main
+```
+
+Después ejecutar manualmente **Build Windows Installer** en GitHub Actions.
+
+Solo cuando el instalador haya sido probado con audios reales conviene crear el tag `v7.0.0`.

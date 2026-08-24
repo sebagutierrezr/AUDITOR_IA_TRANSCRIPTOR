@@ -1,29 +1,35 @@
-#define MyAppName "AUDITOR IA"
-#define MyAppVersion "6.1.3"
+#define MyAppName "AUDITOR IA - TRANSCRIPTOR"
+#define MyAppVersion "7.0.0"
 #define MyAppPublisher "AUDITOR IA"
 #define MyAppExeName "AUDITOR_IA.exe"
 
 [Setup]
-AppId={{D9896A93-56F3-45AB-B5E3-6C19FF22F060}
+AppId={{7BCA8B45-563B-4BC9-9C77-7A0D17007000}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\AUDITOR IA
+DefaultDirName={localappdata}\Programs\AUDITOR IA
 DefaultGroupName=AUDITOR IA
 DisableProgramGroupPage=yes
 OutputDir=..\release
-OutputBaseFilename=AUDITOR_IA_6.1.3_Setup
-SetupIconFile=..\resources\logo.ico
-UninstallDisplayIcon={app}\{#MyAppExeName}
-Compression=lzma2
+OutputBaseFilename=AUDITOR_IA_7.0.0_Setup
+Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=lowest
+SetupIconFile=..\resources\logo.ico
+UninstallDisplayIcon={app}\AUDITOR_IA.exe
+VersionInfoVersion=7.0.0.0
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
+
+[Languages]
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Files]
-Source: "..\dist\AUDITOR_IA_6.1.3_PORTABLE\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\AUDITOR_IA_7.0.0_APP\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\AUDITOR IA"; Filename: "{app}\{#MyAppExeName}"

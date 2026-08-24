@@ -1,16 +1,7 @@
-# Atribuciones de modelos
+# Third-party components
 
-## pyannote speaker-diarization-community-1
+- **PySide6** — Qt for Python, LGPL/commercial terms by The Qt Company.
+- **OpenAI Python SDK** — Apache-2.0, OpenAI.
+- **python-docx** — MIT License.
 
-- Autor/proyecto: pyannote
-- Licencia del pipeline: CC BY 4.0
-- Uso: identificación local de participantes en archivos de audio.
-- Fuente: pyannote/speaker-diarization-community-1 en Hugging Face.
-
-## Faster-Whisper Base y Small
-
-- Proyecto: SYSTRAN Faster-Whisper
-- Uso: transcripción local de audio.
-- Modelos distribuidos en formato CTranslate2.
-
-AUDITOR IA no modifica ni reclama autoría sobre estos modelos.
+This application connects to the OpenAI API when the user configures an API key. No API key is included in the source code or installer.
