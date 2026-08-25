@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$version = "7.1.3"
+$version = "7.2.0"
 $env:AUDITOR_IA_PROJECT_ROOT = $PSScriptRoot
 
 if (-not $env:AUDITOR_IA_FFMPEG_BIN) {
@@ -14,7 +14,7 @@ $smallModel = Join-Path $modelsRoot "small"
 $voiceModel = Join-Path $modelsRoot "pyannote-community-1"
 $ecapaModel = Join-Path $modelsRoot "speechbrain-ecapa"
 $distRoot = Join-Path $PSScriptRoot "dist"
-$buildFolder = Join-Path $distRoot "AUDITOR_IA_7.1.3_BUILD"
+$buildFolder = Join-Path $distRoot "AUDITOR_IA_7.2.0_BUILD"
 $releaseRoot = Join-Path $PSScriptRoot "release"
 
 foreach ($folder in @("build", $distRoot, $releaseRoot)) {
@@ -73,12 +73,12 @@ if (-not (Test-Path $iscc)) { throw "Inno Setup no instalado." }
 & $iscc "$PSScriptRoot\installer\AUDITOR_IA.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo." }
 
-$setup = Join-Path $releaseRoot "AUDITOR_IA_7.1.3_Setup.exe"
+$setup = Join-Path $releaseRoot "AUDITOR_IA_7.2.0_Setup.exe"
 if (-not (Test-Path $setup)) { throw "Setup no generado." }
 
 $bytes = (Get-Item $setup).Length
 $gb = [Math]::Round($bytes / 1GB, 2)
-Write-Host "AUDITOR_IA_7.1.3_Setup.exe: $gb GB"
+Write-Host "AUDITOR_IA_7.2.0_Setup.exe: $gb GB"
 if ($bytes -ge 2GB) { throw "El instalador supera 2 GiB y no puede publicarse como un único asset." }
 
 Write-Host "BUILD COMPLETADO. SOLO SETUP WINDOWS."

@@ -405,10 +405,15 @@ class DiarizationService:
             # acelerar la inferencia sin bloquear completamente Windows.
             torch.set_num_threads(
                 max(
-                    1,
-                    min(10, available),
+                    2,
+                    min(4, available - 2),
                 )
             )
+
+            try:
+                torch.set_num_interop_threads(1)
+            except RuntimeError:
+                pass
 
             pipeline = Pipeline.from_pretrained(
                 str(self.model_path)

@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         brand.setObjectName("BrandTitle")
 
         version = QLabel(
-            "TRANSCRIPTOR · 7.1.3"
+            "TRANSCRIPTOR · 7.2.0"
         )
         version.setObjectName("BrandVersion")
 
@@ -92,7 +92,6 @@ class MainWindow(QMainWindow):
 
         self._files_page = FilesPage(
             self._config_service,
-            self._engine,
             self._history_service,
         )
         self._live_page = LivePage(

@@ -1,53 +1,65 @@
-AUDITOR IA - TRANSCRIPTOR 7.1.3
-LOCAL PRO + EN VIVO
-========================================
+AUDITOR IA - TRANSCRIPTOR 7.2.0
+ESTABLE · PROCESAMIENTO NO BLOQUEANTE
+================================================
 
-ESTA VERSIÓN CONSERVA:
+PROBLEMA CORREGIDO
+------------------
+Las versiones anteriores ejecutaban la IA pesada dentro del mismo proceso
+que mostraba la ventana. Aunque se utilizara QThread, PyTorch, pyannote y
+Faster-Whisper podían consumir suficiente CPU para que Windows mostrara
+"No responde".
+
+ARQUITECTURA 7.2.0
+------------------
+INTERFAZ WINDOWS
+      |
+      | inicia un proceso independiente
+      v
+PROCESO IA
+  - prepara audio
+  - Faster-Whisper Small
+  - Community-1
+  - ECAPA Rescue cuando corresponde
+  - asigna AGENTE / CLIENTE
+      |
+      | devuelve progreso + resultado
+      v
+INTERFAZ WINDOWS
+
+Al seleccionar un archivo la interfaz NO abre el audio, NO lee metadatos y
+NO carga modelos. El trabajo pesado comienza solo al presionar TRANSCRIBIR.
+
+Además:
+- la IA corre con prioridad inferior a la interfaz;
+- se reservan núcleos para Windows;
+- existe botón CANCELAR;
+- el progreso se comunica sin bloquear la ventana.
+
+SE CONSERVA
+-----------
 - Transcripción de archivos.
 - Transcripción en vivo.
+- Faster-Whisper Small.
+- Community-1.
+- ECAPA Rescue.
+- Speaker V2.
 - Historial.
 - Ajustes.
+- TXT / Word.
 - Corrección manual AGENTE / CLIENTE.
-- Exportación TXT y Word.
-
-ARCHIVOS
---------
-Faster-Whisper Small
-      ↓
-Community-1 (2 hablantes)
-      ↓
-Si la separación es dudosa:
-ECAPA Rescue
-      ↓
-Alineación por palabra
-      ↓
-AGENTE / CLIENTE
-
-EN VIVO
--------
-El modo En Vivo captura por separado:
-- micrófono del agente;
-- audio que recibe del cliente.
-
-Por eso no depende de adivinar quién es quién durante la llamada:
-cada fuente ya tiene su rol.
+- Sin API.
+- Sin pagos.
+- Solo instalador Windows.
+- Sin Portable.
 
 DISTRIBUCIÓN
 ------------
-- Solo instalador Windows.
-- Sin Portable.
-- Sin API.
-- Sin pagos por uso.
-- Sin Python en el PC final.
-- Sin descargas de modelos después de instalar.
+AUDITOR_IA_7.2.0_Setup.exe
 
-EL USUARIO FINAL RECIBE:
-AUDITOR_IA_7.1.3_Setup.exe
-
-GIT
----
+SUBIR
+-----
 git add .
-git commit -m "AUDITOR IA 7.1.3 Local Pro En Vivo"
+git commit -m "AUDITOR IA 7.2.0 procesamiento no bloqueante"
 git push origin main
 
 Luego:

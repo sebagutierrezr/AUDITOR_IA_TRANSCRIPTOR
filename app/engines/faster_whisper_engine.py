@@ -118,7 +118,7 @@ class FasterWhisperEngine(SpeechEngine):
                 message = (
                     f"EL MODELO {self._model_name.upper()} "
                     "NO ESTÁ INSTALADO O ESTÁ INCOMPLETO. "
-                    "REINSTALA AUDITOR IA 7.1.3."
+                    "REINSTALA AUDITOR IA 7.2.0."
                 )
                 self._logger.error(message)
                 raise RuntimeError(message)
@@ -130,10 +130,11 @@ class FasterWhisperEngine(SpeechEngine):
                     f"{self._model_name.upper()}...",
                 )
 
-            available = max(1, os.cpu_count() or 2)
+            available = max(2, os.cpu_count() or 4)
+            # Reservar CPU para Windows y la interfaz. La calidad no cambia.
             threads = max(
-                1,
-                min(6, available - 1),
+                2,
+                min(4, available - 2),
             )
 
             if callback:

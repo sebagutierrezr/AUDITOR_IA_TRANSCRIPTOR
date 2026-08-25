@@ -1,6 +1,10 @@
-# AUDITOR IA - TRANSCRIPTOR 7.1.3
+# AUDITOR IA - TRANSCRIPTOR 7.2.0
 
-Aplicación Windows local para transcripción de entrevistas.
+Aplicación Windows local para transcribir entrevistas con identificación AGENTE / CLIENTE.
+
+## Arquitectura de archivos
+
+La interfaz y la inteligencia artificial se ejecutan en procesos separados. Faster-Whisper, Community-1 y ECAPA no bloquean el proceso gráfico.
 
 ## Funciones
 
@@ -8,20 +12,14 @@ Aplicación Windows local para transcripción de entrevistas.
 - Transcripción en vivo.
 - Faster-Whisper Small.
 - Community-1.
-- ECAPA Rescue como segunda capa acústica.
-- Timestamps por palabra para archivos.
-- Identificación AGENTE / CLIENTE.
-- Captura separada AGENTE / CLIENTE en En Vivo.
+- ECAPA Rescue.
+- Timestamps por palabra.
+- Identificación contextual AGENTE / CLIENTE.
 - Corrección manual.
 - Historial.
 - Exportación TXT y Word.
-- Sin API y sin pagos por uso.
-- Un único instalador Windows.
+- Sin API.
+- Sin pagos por uso.
+- Solo instalador Windows.
 
-## Distribución
-
-El usuario final instala únicamente:
-
-`AUDITOR_IA_7.1.3_Setup.exe`
-
-Los modelos y dependencias quedan incluidos en el instalador.
+El usuario final instala únicamente `AUDITOR_IA_7.2.0_Setup.exe`.

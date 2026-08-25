@@ -126,6 +126,29 @@ if os.environ.get("AUDITOR_IA_SELF_TEST") == "1":
     raise SystemExit(_runtime_self_test())
 
 
+def _run_file_worker_mode() -> int | None:
+    if "--file-worker-smoke" in sys.argv:
+        print("AUDITOR_FILE_WORKER_SMOKE_OK", flush=True)
+        return 0
+
+    if "--file-worker" not in sys.argv:
+        return None
+
+    try:
+        index = sys.argv.index("--file-worker")
+        job_path = sys.argv[index + 1]
+    except (ValueError, IndexError):
+        return 2
+
+    from app.file_worker_cli import main as file_worker_main
+    return file_worker_main([job_path])
+
+
+_file_worker_exit = _run_file_worker_mode()
+if _file_worker_exit is not None:
+    raise SystemExit(_file_worker_exit)
+
+
 from app.bootstrap import run_app
 
 
