@@ -43,6 +43,13 @@ def main() -> int:
     import torchcodec
     import pyannote.audio
     import speechbrain
+
+    from app.services.speechbrain_compat import (
+        patch_speechbrain_lazy_import,
+    )
+
+    patch_speechbrain_lazy_import()
+
     import sklearn
     import faster_whisper
     import ctranslate2

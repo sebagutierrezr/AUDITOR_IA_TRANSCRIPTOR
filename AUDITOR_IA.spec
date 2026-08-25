@@ -75,7 +75,14 @@ for distribution in (
 
 hiddenimports.extend(collect_submodules("PySide6"))
 hiddenimports.extend(collect_submodules("torchcodec"))
-hiddenimports.extend(collect_submodules("speechbrain"))
+hiddenimports.extend(
+    collect_submodules(
+        "speechbrain",
+        filter=lambda name: not name.startswith(
+            "speechbrain.integrations.k2_fsa"
+        ),
+    )
+)
 hiddenimports = list(dict.fromkeys(hiddenimports))
 
 a = Analysis(
@@ -84,7 +91,14 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    excludes=["tkinter", "pytest", "jupyter", "notebook"],
+    excludes=[
+        "tkinter",
+        "pytest",
+        "jupyter",
+        "notebook",
+        "k2",
+        "speechbrain.integrations.k2_fsa",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -106,5 +120,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="AUDITOR_IA_7.1.1_BUILD",
+    name="AUDITOR_IA_7.1.2_BUILD",
 )

@@ -1,4 +1,4 @@
-AUDITOR IA - TRANSCRIPTOR 7.1.1
+AUDITOR IA - TRANSCRIPTOR 7.1.2
 LOCAL PRO + EN VIVO
 ========================================
 
@@ -42,12 +42,12 @@ DISTRIBUCIÓN
 - Sin descargas de modelos después de instalar.
 
 EL USUARIO FINAL RECIBE:
-AUDITOR_IA_7.1.1_Setup.exe
+AUDITOR_IA_7.1.2_Setup.exe
 
 GIT
 ---
 git add .
-git commit -m "AUDITOR IA 7.1.1 Local Pro En Vivo"
+git commit -m "AUDITOR IA 7.1.2 Local Pro En Vivo"
 git push origin main
 
 Luego:

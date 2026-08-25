@@ -59,6 +59,14 @@ jobs:
           python -m pip check
           if ($LASTEXITCODE -ne 0) { throw "pip check detecto incompatibilidades." }
 
+      - name: Corregir compatibilidad SpeechBrain en Windows
+        shell: pwsh
+        run: |
+          python scripts\patch_speechbrain_windows.py
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo aplicar el parche Windows de SpeechBrain."
+          }
+
       - name: Verificar runtime
         shell: pwsh
         run: |
@@ -72,6 +80,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Speaker V2 fallo." }
           python -m unittest tests.test_speaker_rescue -v
           if ($LASTEXITCODE -ne 0) { throw "Speaker Rescue fallo." }
+
+          python -m unittest tests.test_speechbrain_windows_patch -v
+          if ($LASTEXITCODE -ne 0) { throw "SpeechBrain Windows patch test fallo." }
 
       - name: Instalar herramientas de build
         shell: pwsh
@@ -90,7 +101,7 @@ jobs:
       - name: Self-test del EXE real
         shell: pwsh
         run: |
-          $folder = "dist\AUDITOR_IA_7.1.1_BUILD"
+          $folder = "dist\AUDITOR_IA_7.1.2_BUILD"
           $exe = Join-Path $folder "AUDITOR_IA.exe"
           if (-not (Test-Path $exe)) { throw "AUDITOR_IA.exe no existe." }
 
@@ -109,8 +120,8 @@ jobs:
       - name: Guardar instalador
         uses: actions/upload-artifact@v4
         with:
-          name: AUDITOR_IA_7.1.1_Setup
-          path: release/AUDITOR_IA_7.1.1_Setup.exe
+          name: AUDITOR_IA_7.1.2_Setup
+          path: release/AUDITOR_IA_7.1.2_Setup.exe
           if-no-files-found: error
           compression-level: 0
 
@@ -121,6 +132,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" `
-            "release/AUDITOR_IA_7.1.1_Setup.exe" `
-            --title "AUDITOR IA 7.1.1 LOCAL PRO" `
+            "release/AUDITOR_IA_7.1.2_Setup.exe" `
+            --title "AUDITOR IA 7.1.2 LOCAL PRO" `
             --notes "Versión 100 % local: Faster-Whisper Small + Community-1 + ECAPA Rescue. Sin API, sin pagos por uso y solo instalador Windows."

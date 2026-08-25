@@ -1,0 +1,41 @@
+AUDITOR IA - TRANSCRIPTOR 7.1.2
+FIX BUILD WINDOWS / SPEECHBRAIN
+================================================
+
+ERROR CORREGIDO
+----------------
+Lazy import of LazyModule(
+  target=speechbrain.integrations.k2_fsa
+) failed
+
+CAUSA
+-----
+SpeechBrain 1.1.0 contiene una comprobación para evitar imports
+accidentales provocados por inspect.py, pero compara una ruta POSIX
+terminada en "/inspect.py". En Windows la ruta usa backslashes.
+
+Eso puede activar por accidente k2_fsa, aunque AUDITOR IA no usa K2.
+
+CORRECCIÓN
+----------
+- Parche automático de SpeechBrain durante GitHub Actions.
+- Parche adicional dentro de la aplicación.
+- k2_fsa queda excluido del ejecutable.
+- ECAPA Rescue se mantiene.
+- Community-1 se mantiene.
+- En Vivo se mantiene.
+- Solo Setup Windows.
+- Sin API.
+- Sin pagos.
+
+NO INSTALES K2.
+No es necesario para ECAPA ni para AUDITOR IA.
+
+SUBIR
+-----
+git add .
+git commit -m "AUDITOR IA 7.1.2 fix SpeechBrain Windows"
+git push origin main
+
+Luego:
+GitHub > Actions > Build Windows Installer > Run workflow > main

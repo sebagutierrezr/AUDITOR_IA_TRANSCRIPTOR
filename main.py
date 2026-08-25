@@ -62,6 +62,13 @@ def _runtime_self_test() -> int:
         import torchcodec
         import pyannote.audio
         import speechbrain
+
+        from app.services.speechbrain_compat import (
+            patch_speechbrain_lazy_import,
+        )
+
+        patch_speechbrain_lazy_import()
+
         import soundcard
         import sounddevice
         import sklearn

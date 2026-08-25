@@ -1,6 +1,6 @@
 # Changelog
 
-## 7.1.1 LOCAL PRO
+## 7.1.2 LOCAL PRO
 - Interfaz simplificada a Transcribir, Historial y Ajustes.
 - Eliminada la transcripción en vivo y dependencias de dispositivos.
 - Eliminado Portable: solo Setup Windows.

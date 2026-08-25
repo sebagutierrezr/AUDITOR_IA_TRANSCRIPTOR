@@ -127,6 +127,12 @@ class SpeakerRescueService:
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
+        from app.services.speechbrain_compat import (
+            patch_speechbrain_lazy_import,
+        )
+
+        patch_speechbrain_lazy_import()
+
         from speechbrain.inference.speaker import EncoderClassifier
 
         classifier = EncoderClassifier.from_hparams(

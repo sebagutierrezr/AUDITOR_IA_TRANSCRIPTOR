@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$version = "7.1.1"
+$version = "7.1.2"
 $env:AUDITOR_IA_PROJECT_ROOT = $PSScriptRoot
 
 if (-not $env:AUDITOR_IA_FFMPEG_BIN) {
@@ -14,7 +14,7 @@ $smallModel = Join-Path $modelsRoot "small"
 $voiceModel = Join-Path $modelsRoot "pyannote-community-1"
 $ecapaModel = Join-Path $modelsRoot "speechbrain-ecapa"
 $distRoot = Join-Path $PSScriptRoot "dist"
-$buildFolder = Join-Path $distRoot "AUDITOR_IA_7.1.1_BUILD"
+$buildFolder = Join-Path $distRoot "AUDITOR_IA_7.1.2_BUILD"
 $releaseRoot = Join-Path $PSScriptRoot "release"
 
 foreach ($folder in @("build", $distRoot, $releaseRoot)) {
@@ -22,6 +22,10 @@ foreach ($folder in @("build", $distRoot, $releaseRoot)) {
 }
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $modelsRoot -Force | Out-Null
+
+Write-Host "CORRIGIENDO SPEECHBRAIN PARA WINDOWS..."
+python "$PSScriptRoot\scripts\patch_speechbrain_windows.py"
+if ($LASTEXITCODE -ne 0) { throw "SpeechBrain Windows patch fallo." }
 
 Write-Host "DESCARGANDO / VERIFICANDO MODELOS LOCALES..."
 python "$PSScriptRoot\scripts\download_release_models.py"
@@ -69,12 +73,12 @@ if (-not (Test-Path $iscc)) { throw "Inno Setup no instalado." }
 & $iscc "$PSScriptRoot\installer\AUDITOR_IA.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo." }
 
-$setup = Join-Path $releaseRoot "AUDITOR_IA_7.1.1_Setup.exe"
+$setup = Join-Path $releaseRoot "AUDITOR_IA_7.1.2_Setup.exe"
 if (-not (Test-Path $setup)) { throw "Setup no generado." }
 
 $bytes = (Get-Item $setup).Length
 $gb = [Math]::Round($bytes / 1GB, 2)
-Write-Host "AUDITOR_IA_7.1.1_Setup.exe: $gb GB"
+Write-Host "AUDITOR_IA_7.1.2_Setup.exe: $gb GB"
 if ($bytes -ge 2GB) { throw "El instalador supera 2 GiB y no puede publicarse como un único asset." }
 
 Write-Host "BUILD COMPLETADO. SOLO SETUP WINDOWS."
