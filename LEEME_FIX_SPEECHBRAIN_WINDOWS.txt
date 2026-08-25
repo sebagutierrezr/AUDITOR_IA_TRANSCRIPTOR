@@ -1,4 +1,4 @@
-AUDITOR IA - TRANSCRIPTOR 7.1.2
+AUDITOR IA - TRANSCRIPTOR 7.1.3
 FIX BUILD WINDOWS / SPEECHBRAIN
 ================================================
 
@@ -34,7 +34,7 @@ No es necesario para ECAPA ni para AUDITOR IA.
 SUBIR
 -----
 git add .
-git commit -m "AUDITOR IA 7.1.2 fix SpeechBrain Windows"
+git commit -m "AUDITOR IA 7.1.3 fix SpeechBrain Windows"
 git push origin main
 
 Luego:

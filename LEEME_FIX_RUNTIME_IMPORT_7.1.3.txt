@@ -1,0 +1,53 @@
+AUDITOR IA - TRANSCRIPTOR 7.1.3
+FIX "NO MODULE NAMED APP"
+================================================
+
+ERROR CORREGIDO
+---------------
+ModuleNotFoundError: No module named 'app'
+
+CAUSA
+-----
+GitHub Actions ejecutaba:
+
+  python scripts\verify_native_runtime.py
+
+Cuando Python ejecuta un archivo de esa forma, coloca la carpeta
+"scripts" como primer directorio de búsqueda. El paquete "app" está
+un nivel más arriba, en la raíz del proyecto.
+
+Por eso el parche SpeechBrain sí se aplicaba correctamente, pero el
+siguiente verificador fallaba antes de continuar.
+
+CORRECCIÓN 7.1.3
+----------------
+1. verify_native_runtime.py agrega la raíz del proyecto a sys.path.
+2. verify_speaker_rescue_model.py hace lo mismo.
+3. GitHub Actions ejecuta los verificadores como módulos:
+     python -m scripts.verify_native_runtime
+     python -m scripts.verify_speaker_rescue_model
+4. build_release.ps1 usa exactamente el mismo método.
+5. Se agregó una prueba que ejecuta los verificadores desde FUERA
+   del repositorio y confirma que "app" puede importarse.
+
+SE CONSERVA
+-----------
+- Transcripción de archivos.
+- Transcripción en vivo.
+- Faster-Whisper Small.
+- Community-1.
+- ECAPA Rescue.
+- Corrección SpeechBrain Windows.
+- Sin API.
+- Sin pagos.
+- Solo Setup Windows.
+- Sin Portable.
+
+SUBIR
+-----
+git add .
+git commit -m "AUDITOR IA 7.1.3 fix runtime import path"
+git push origin main
+
+Luego:
+GitHub > Actions > Build Windows Installer > Run workflow > main

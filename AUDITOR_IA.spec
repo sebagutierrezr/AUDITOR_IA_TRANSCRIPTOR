@@ -120,5 +120,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="AUDITOR_IA_7.1.2_BUILD",
+    name="AUDITOR_IA_7.1.3_BUILD",
 )

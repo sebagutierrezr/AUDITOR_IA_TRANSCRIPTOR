@@ -1,4 +1,4 @@
-# AUDITOR IA - TRANSCRIPTOR 7.1.2
+# AUDITOR IA - TRANSCRIPTOR 7.1.3
 
 Aplicación Windows local para transcripción de entrevistas.
 
@@ -22,6 +22,6 @@ Aplicación Windows local para transcripción de entrevistas.
 
 El usuario final instala únicamente:
 
-`AUDITOR_IA_7.1.2_Setup.exe`
+`AUDITOR_IA_7.1.3_Setup.exe`
 
 Los modelos y dependencias quedan incluidos en el instalador.
