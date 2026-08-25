@@ -1,0 +1,54 @@
+AUDITOR IA - TRANSCRIPTOR 7.1.1
+LOCAL PRO + EN VIVO
+========================================
+
+ESTA VERSIÓN CONSERVA:
+- Transcripción de archivos.
+- Transcripción en vivo.
+- Historial.
+- Ajustes.
+- Corrección manual AGENTE / CLIENTE.
+- Exportación TXT y Word.
+
+ARCHIVOS
+--------
+Faster-Whisper Small
+      ↓
+Community-1 (2 hablantes)
+      ↓
+Si la separación es dudosa:
+ECAPA Rescue
+      ↓
+Alineación por palabra
+      ↓
+AGENTE / CLIENTE
+
+EN VIVO
+-------
+El modo En Vivo captura por separado:
+- micrófono del agente;
+- audio que recibe del cliente.
+
+Por eso no depende de adivinar quién es quién durante la llamada:
+cada fuente ya tiene su rol.
+
+DISTRIBUCIÓN
+------------
+- Solo instalador Windows.
+- Sin Portable.
+- Sin API.
+- Sin pagos por uso.
+- Sin Python en el PC final.
+- Sin descargas de modelos después de instalar.
+
+EL USUARIO FINAL RECIBE:
+AUDITOR_IA_7.1.1_Setup.exe
+
+GIT
+---
+git add .
+git commit -m "AUDITOR IA 7.1.1 Local Pro En Vivo"
+git push origin main
+
+Luego:
+GitHub > Actions > Build Windows Installer > Run workflow > main

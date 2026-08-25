@@ -1,116 +1,204 @@
-from __future__ import annotations
+from pathlib import Path
+import sys
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
     QStackedWidget,
-    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
 
+from app.engines.faster_whisper_engine import FasterWhisperEngine
 from app.services.config_service import ConfigService
+from app.services.history_service import HistoryService
 from app.ui.pages.files_page import FilesPage
+from app.ui.pages.live_page import LivePage
 from app.ui.pages.history_page import HistoryPage
 from app.ui.pages.settings_page import SettingsPage
+from app.ui.styles import APP_STYLE
 
 
 class MainWindow(QMainWindow):
-    VERSION = "7.0.0"
-
-    def __init__(self, config_service: ConfigService) -> None:
+    def __init__(
+        self,
+        config_service: ConfigService,
+    ):
         super().__init__()
-        self._config = config_service
-        self.setWindowTitle("AUDITOR IA - TRANSCRIPTOR")
-        self.resize(1380, 860)
-        self.setMinimumSize(1080, 700)
 
-        root = QWidget()
-        root.setObjectName("Root")
-        self.setCentralWidget(root)
-        root_layout = QHBoxLayout(root)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
+        self._config_service = config_service
+        self._history_service = HistoryService()
+        self._engine = FasterWhisperEngine("ALTA")
 
-        sidebar = QFrame()
+        self.setWindowTitle(
+            "AUDITOR IA - TRANSCRIPTOR"
+        )
+        self.setMinimumSize(1100, 700)
+        self.resize(1360, 840)
+        self.setStyleSheet(APP_STYLE)
+
+        resource_root = (
+            Path(getattr(sys, "_MEIPASS"))
+            if getattr(sys, "frozen", False)
+            else Path(__file__).resolve().parents[2]
+        )
+
+        icon = resource_root / "resources" / "logo.svg"
+        self.setWindowIcon(QIcon(str(icon)))
+
+        self._stack = QStackedWidget()
+        self._build(icon)
+
+    def _build(self, icon: Path) -> None:
+        central = QWidget()
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        sidebar = QWidget()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(214)
+        sidebar.setFixedWidth(215)
+
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(12, 20, 12, 18)
-        side.setSpacing(6)
+        side.setContentsMargins(18, 22, 18, 20)
+        side.setSpacing(8)
+
+        logo = QLabel()
+        logo.setPixmap(
+            QPixmap(str(icon)).scaled(
+                46,
+                46,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
 
         brand = QLabel("AUDITOR IA")
-        brand.setObjectName("Brand")
+        brand.setObjectName("BrandTitle")
+
+        version = QLabel(
+            "TRANSCRIPTOR · 7.1.1"
+        )
+        version.setObjectName("BrandVersion")
+
+        side.addWidget(logo)
         side.addWidget(brand)
-        product = QLabel("TRANSCRIPTOR")
-        product.setObjectName("Product")
-        side.addWidget(product)
+        side.addWidget(version)
+        side.addSpacing(20)
 
-        online = QLabel("●  ALTA PRECISIÓN ONLINE")
-        online.setObjectName("OnlineBadge")
-        side.addWidget(online)
-        side.addSpacing(18)
+        self._files_page = FilesPage(
+            self._config_service,
+            self._engine,
+            self._history_service,
+        )
+        self._live_page = LivePage(
+            self._config_service,
+            self._engine,
+            self._history_service,
+        )
+        self._history_page = HistoryPage(
+            self._history_service
+        )
+        self._settings_page = SettingsPage(
+            self._config_service
+        )
 
-        self.stack = QStackedWidget()
-        self.files_page = FilesPage(config_service)
-        self.history_page = HistoryPage()
-        self.settings_page = SettingsPage(config_service)
-        self.pages = [self.files_page, self.history_page, self.settings_page]
-        for page in self.pages:
-            self.stack.addWidget(page)
+        self._files_page.history_changed.connect(
+            self._history_page.refresh
+        )
+        self._live_page.history_changed.connect(
+            self._history_page.refresh
+        )
+        self._history_page.open_requested.connect(
+            self._open_history_entry
+        )
+        self._settings_page.profile_changed.connect(
+            self._engine.set_profile
+        )
 
-        nav = [
-            ("TRANSCRIBIR", 0),
-            ("HISTORIAL", 1),
-            ("AJUSTES", 2),
+        self._status = QLabel("Listo")
+        self._status.setObjectName("SidebarStatus")
+
+        self._files_page.status_changed.connect(
+            self._set_status
+        )
+        self._live_page.status_changed.connect(
+            self._set_status
+        )
+        self._history_page.status_changed.connect(
+            self._set_status
+        )
+        self._settings_page.status_changed.connect(
+            self._set_status
+        )
+
+        pages = [
+            ("Transcribir", self._files_page),
+            ("En vivo", self._live_page),
+            ("Historial", self._history_page),
+            ("Ajustes", self._settings_page),
         ]
-        self.nav_buttons = []
-        for text, index in nav:
-            btn = QPushButton(text)
-            btn.setObjectName("NavButton")
-            btn.setProperty("active", index == 0)
-            btn.clicked.connect(lambda checked=False, i=index: self.navigate(i))
-            side.addWidget(btn)
-            self.nav_buttons.append(btn)
+
+        self._buttons = []
+
+        for index, (name, page) in enumerate(pages):
+            button = QPushButton(name)
+            button.setObjectName("NavButton")
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda checked=False, i=index:
+                self._select(i)
+            )
+
+            self._buttons.append(button)
+            side.addWidget(button)
+            self._stack.addWidget(page)
 
         side.addStretch()
-        version = QLabel(f"VERSIÓN {self.VERSION}\nWINDOWS INSTALLER")
-        version.setObjectName("Version")
-        side.addWidget(version)
 
-        root_layout.addWidget(sidebar)
-        root_layout.addWidget(self.stack, 1)
+        local_badge = QLabel(
+            "100 % local\nSin API · Sin pagos"
+        )
+        local_badge.setObjectName("SidebarFooter")
 
-        status = QStatusBar()
-        status.setSizeGripEnabled(False)
-        self.status_label = QLabel("LISTO")
-        status.addWidget(self.status_label)
-        self.setStatusBar(status)
+        side.addWidget(self._status)
+        side.addWidget(local_badge)
 
-        self.files_page.status_changed.connect(self._set_status)
-        self.files_page.history_changed.connect(self.history_page.refresh)
-        self.history_page.status_changed.connect(self._set_status)
-        self.history_page.open_entry.connect(self._open_history)
-        self.settings_page.status_changed.connect(self._set_status)
+        content = QWidget()
+        content.setObjectName("ContentArea")
 
-    def navigate(self, index: int) -> None:
-        self.stack.setCurrentIndex(index)
-        for i, btn in enumerate(self.nav_buttons):
-            btn.setProperty("active", i == index)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-        page = self.pages[index]
-        if hasattr(page, "refresh"):
-            page.refresh()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(self._stack)
 
-    def _open_history(self, entry: dict) -> None:
-        self.files_page.load_history_entry(entry)
-        self.navigate(0)
-        self._set_status("TRANSCRIPCIÓN CARGADA DESDE HISTORIAL")
+        root.addWidget(sidebar)
+        root.addWidget(content, 1)
+
+        self.setCentralWidget(central)
+        self._select(0)
+
+    def _select(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+
+        for i, button in enumerate(self._buttons):
+            button.setChecked(i == index)
+
+        if index == 1:
+            self._live_page.refresh_labels()
+        elif index == 2:
+            self._history_page.refresh()
+
+    def _open_history_entry(
+        self,
+        entry: dict,
+    ) -> None:
+        self._files_page.load_history_entry(entry)
+        self._select(0)
 
     def _set_status(self, message: str) -> None:
-        self.status_label.setText(message)
+        clean = (message or "Listo").strip()
+        self._status.setText(clean[:48])

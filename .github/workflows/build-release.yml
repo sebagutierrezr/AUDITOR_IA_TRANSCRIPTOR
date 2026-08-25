@@ -12,50 +12,105 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
 
     steps:
       - name: Descargar código
         uses: actions/checkout@v4
 
-      - name: Configurar Python 3.11
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
+
+      - name: Preparar Micromamba
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: powershell
+          cache-environment: false
+
+      - name: Instalar FFmpeg 7 Shared
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:GITHUB_WORKSPACE ".ffmpeg7"
+          micromamba create -y -p "$prefix" -c conda-forge "ffmpeg=7.*"
+          if ($LASTEXITCODE -ne 0) { throw "No se pudo instalar FFmpeg 7." }
+
+          $bin = Join-Path $prefix "Library\bin"
+          if (-not (Test-Path "$bin\ffmpeg.exe")) { throw "No existe ffmpeg.exe." }
+          foreach ($pattern in @("avcodec-*.dll", "avformat-*.dll", "avutil-*.dll", "swresample-*.dll")) {
+            if (-not (Get-ChildItem $bin -Filter $pattern -File)) { throw "FFmpeg Shared incompleto: $pattern" }
+          }
+          "AUDITOR_IA_FFMPEG_BIN=$bin" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $bin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Instalar PyTorch CPU
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install torch==2.9.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { throw "PyTorch/Torchaudio fallo." }
 
       - name: Instalar dependencias
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip setuptools wheel
           python -m pip install -r requirements.txt
-          if ($LASTEXITCODE -ne 0) { throw "Instalación de dependencias falló." }
+          if ($LASTEXITCODE -ne 0) { throw "requirements.txt fallo." }
           python -m pip check
-          if ($LASTEXITCODE -ne 0) { throw "pip check encontró incompatibilidades." }
+          if ($LASTEXITCODE -ne 0) { throw "pip check detecto incompatibilidades." }
 
-      - name: Ejecutar pruebas
+      - name: Verificar runtime
         shell: pwsh
         run: |
-          python -m unittest discover -s tests -p "test_*.py" -v
-          if ($LASTEXITCODE -ne 0) { throw "Las pruebas fallaron." }
+          python scripts\verify_native_runtime.py --ffmpeg-bin "$env:AUDITOR_IA_FFMPEG_BIN"
+          if ($LASTEXITCODE -ne 0) { throw "Runtime previo fallo." }
+
+      - name: Probar lógica de hablantes
+        shell: pwsh
+        run: |
+          python -m unittest tests.test_speaker_v2 -v
+          if ($LASTEXITCODE -ne 0) { throw "Speaker V2 fallo." }
+          python -m unittest tests.test_speaker_rescue -v
+          if ($LASTEXITCODE -ne 0) { throw "Speaker Rescue fallo." }
 
       - name: Instalar herramientas de build
         shell: pwsh
         run: |
           python -m pip install pyinstaller==6.14.2 "pyinstaller-hooks-contrib>=2025.8"
-          if ($LASTEXITCODE -ne 0) { throw "PyInstaller falló al instalar." }
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller fallo." }
           choco install innosetup --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup falló al instalar." }
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo." }
 
       - name: Construir instalador
         shell: pwsh
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: ./build_release.ps1
 
-      - name: Subir instalador
+      - name: Self-test del EXE real
+        shell: pwsh
+        run: |
+          $folder = "dist\AUDITOR_IA_7.1.1_BUILD"
+          $exe = Join-Path $folder "AUDITOR_IA.exe"
+          if (-not (Test-Path $exe)) { throw "AUDITOR_IA.exe no existe." }
+
+          $env:AUDITOR_IA_SELF_TEST = "1"
+          $process = Start-Process -FilePath $exe -WorkingDirectory $folder -Wait -PassThru
+          Remove-Item Env:AUDITOR_IA_SELF_TEST
+
+          if ($process.ExitCode -ne 0) {
+            $errorFile = Join-Path $folder "runtime_self_test_error.txt"
+            if (Test-Path $errorFile) { Get-Content $errorFile }
+            throw "SELF-TEST fallo. ExitCode=$($process.ExitCode)"
+          }
+          Get-Content (Join-Path $folder "runtime_self_test_ok.txt")
+          Write-Host "SELF-TEST DEL EXE: CORRECTO"
+
+      - name: Guardar instalador
         uses: actions/upload-artifact@v4
         with:
-          name: AUDITOR_IA_7.0.0_Setup
-          path: release/AUDITOR_IA_7.0.0_Setup.exe
+          name: AUDITOR_IA_7.1.1_Setup
+          path: release/AUDITOR_IA_7.1.1_Setup.exe
           if-no-files-found: error
           compression-level: 0
 
@@ -66,6 +121,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" `
-            "release/AUDITOR_IA_7.0.0_Setup.exe" `
-            --title "AUDITOR IA 7.0.0" `
-            --notes "Alta precisión con gpt-4o-transcribe-diarize, identificación semántica AGENTE/CLIENTE e interfaz simplificada. Solo instalador Windows."
+            "release/AUDITOR_IA_7.1.1_Setup.exe" `
+            --title "AUDITOR IA 7.1.1 LOCAL PRO" `
+            --notes "Versión 100 % local: Faster-Whisper Small + Community-1 + ECAPA Rescue. Sin API, sin pagos por uso y solo instalador Windows."

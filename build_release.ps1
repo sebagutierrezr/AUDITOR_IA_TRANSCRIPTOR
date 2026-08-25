@@ -1,56 +1,80 @@
 ﻿$ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$version = "7.0.0"
-$distRoot = Join-Path $PSScriptRoot "dist"
-$appFolder = Join-Path $distRoot "AUDITOR_IA_7.0.0_APP"
-$releaseRoot = Join-Path $PSScriptRoot "release"
-$setup = Join-Path $releaseRoot "AUDITOR_IA_7.0.0_Setup.exe"
+$version = "7.1.1"
+$env:AUDITOR_IA_PROJECT_ROOT = $PSScriptRoot
 
-if (Test-Path "build") { Remove-Item "build" -Recurse -Force }
-if (Test-Path $distRoot) { Remove-Item $distRoot -Recurse -Force }
-if (Test-Path $releaseRoot) { Remove-Item $releaseRoot -Recurse -Force }
-New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
-
-Write-Host "========================================="
-Write-Host " AUDITOR IA 7.0.0 - WINDOWS INSTALLER"
-Write-Host "========================================="
-Write-Host "Build ligero de alta precisión. Solo instalador Windows."
-
-Write-Host "[1/4] Ejecutando pruebas..."
-python -m unittest discover -s tests -p "test_*.py" -v
-if ($LASTEXITCODE -ne 0) { throw "Las pruebas fallaron." }
-
-Write-Host "[2/4] Compilando aplicación..."
-python -m PyInstaller --clean --noconfirm "$PSScriptRoot\AUDITOR_IA.spec"
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller falló." }
-
-$exe = Join-Path $appFolder "AUDITOR_IA.exe"
-if (-not (Test-Path $exe)) { throw "No se generó AUDITOR_IA.exe." }
-
-Write-Host "[3/4] Self-test del EXE real..."
-$env:AUDITOR_IA_SELF_TEST = "1"
-$process = Start-Process -FilePath $exe -WorkingDirectory $appFolder -Wait -PassThru
-Remove-Item Env:AUDITOR_IA_SELF_TEST
-if ($process.ExitCode -ne 0) {
-    $errorFile = Join-Path $appFolder "runtime_self_test_error.txt"
-    if (Test-Path $errorFile) { Get-Content $errorFile }
-    throw "El EXE no superó el self-test. ExitCode=$($process.ExitCode)"
+if (-not $env:AUDITOR_IA_FFMPEG_BIN) {
+    throw "AUDITOR_IA_FFMPEG_BIN no esta configurado."
 }
-$okFile = Join-Path $appFolder "runtime_self_test_ok.txt"
-if (Test-Path $okFile) { Get-Content $okFile }
 
-Write-Host "[4/4] Creando instalador..."
-$isccCandidates = @(
-    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-    "C:\Program Files\Inno Setup 6\ISCC.exe"
-)
-$iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $iscc) { throw "Inno Setup 6 no está instalado." }
+$ffmpegSource = $env:AUDITOR_IA_FFMPEG_BIN
+$modelsRoot = Join-Path $PSScriptRoot "models"
+$smallModel = Join-Path $modelsRoot "small"
+$voiceModel = Join-Path $modelsRoot "pyannote-community-1"
+$ecapaModel = Join-Path $modelsRoot "speechbrain-ecapa"
+$distRoot = Join-Path $PSScriptRoot "dist"
+$buildFolder = Join-Path $distRoot "AUDITOR_IA_7.1.1_BUILD"
+$releaseRoot = Join-Path $PSScriptRoot "release"
 
+foreach ($folder in @("build", $distRoot, $releaseRoot)) {
+    if (Test-Path $folder) { Remove-Item $folder -Recurse -Force }
+}
+New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $modelsRoot -Force | Out-Null
+
+Write-Host "DESCARGANDO / VERIFICANDO MODELOS LOCALES..."
+python "$PSScriptRoot\scripts\download_release_models.py"
+if ($LASTEXITCODE -ne 0) { throw "Fallo descarga/verificacion de modelos." }
+
+Write-Host "VERIFICANDO COMMUNITY-1 Y RUNTIME..."
+python "$PSScriptRoot\scripts\verify_native_runtime.py" `
+    --ffmpeg-bin "$ffmpegSource" `
+    --voice-model "$voiceModel"
+if ($LASTEXITCODE -ne 0) { throw "Runtime/modelos no validos." }
+
+Write-Host "VERIFICANDO ECAPA LOCAL..."
+python "$PSScriptRoot\scripts\verify_speaker_rescue_model.py" --model "$ecapaModel"
+if ($LASTEXITCODE -ne 0) { throw "ECAPA local no valido." }
+
+Write-Host "COMPILANDO..."
+python -m PyInstaller --clean --noconfirm "$PSScriptRoot\AUDITOR_IA.spec"
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller fallo." }
+
+$exe = Join-Path $buildFolder "AUDITOR_IA.exe"
+if (-not (Test-Path $exe)) { throw "No se genero AUDITOR_IA.exe." }
+
+foreach ($folder in @("models", "config")) {
+    New-Item -ItemType Directory -Path (Join-Path $buildFolder $folder) -Force | Out-Null
+}
+Copy-Item $smallModel (Join-Path $buildFolder "models\small") -Recurse -Force
+Copy-Item $voiceModel (Join-Path $buildFolder "models\pyannote-community-1") -Recurse -Force
+Copy-Item $ecapaModel (Join-Path $buildFolder "models\speechbrain-ecapa") -Recurse -Force
+
+Write-Host "COPIANDO FFMPEG SHARED..."
+$ffmpegTarget = Join-Path $buildFolder "ffmpeg\bin"
+New-Item -ItemType Directory -Path $ffmpegTarget -Force | Out-Null
+Get-ChildItem $ffmpegSource -File | Where-Object {
+    $_.Extension -ieq ".dll" -or $_.Name -ieq "ffmpeg.exe" -or $_.Name -ieq "ffprobe.exe"
+} | Copy-Item -Destination $ffmpegTarget -Force
+
+foreach ($pattern in @("avcodec-*.dll", "avformat-*.dll", "avutil-*.dll", "swresample-*.dll")) {
+    if (-not (Get-ChildItem $ffmpegTarget -Filter $pattern -File)) {
+        throw "FFmpeg empaquetado incompleto: $pattern"
+    }
+}
+
+$iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if (-not (Test-Path $iscc)) { throw "Inno Setup no instalado." }
 & $iscc "$PSScriptRoot\installer\AUDITOR_IA.iss"
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup falló." }
-if (-not (Test-Path $setup)) { throw "No se generó $setup" }
+if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo." }
 
-$sizeMb = [Math]::Round((Get-Item $setup).Length / 1MB, 1)
-Write-Host "INSTALADOR LISTO: AUDITOR_IA_7.0.0_Setup.exe ($sizeMb MB)"
+$setup = Join-Path $releaseRoot "AUDITOR_IA_7.1.1_Setup.exe"
+if (-not (Test-Path $setup)) { throw "Setup no generado." }
+
+$bytes = (Get-Item $setup).Length
+$gb = [Math]::Round($bytes / 1GB, 2)
+Write-Host "AUDITOR_IA_7.1.1_Setup.exe: $gb GB"
+if ($bytes -ge 2GB) { throw "El instalador supera 2 GiB y no puede publicarse como un único asset." }
+
+Write-Host "BUILD COMPLETADO. SOLO SETUP WINDOWS."

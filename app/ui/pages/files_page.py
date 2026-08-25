@@ -3,10 +3,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
-    QApplication,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -16,276 +15,305 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QVBoxLayout,
-    QWidget,
 )
 
+from app.engines.faster_whisper_engine import FasterWhisperEngine
+from app.models.conversation import Conversation
 from app.services.config_service import ConfigService
-from app.services.export_service import ExportService
+from app.services.diarization_service import DiarizationService
 from app.services.history_service import HistoryService
-from app.services.openai_key_service import OpenAIKeyService
-from app.ui.pages.common import create_page_header
-from app.ui.widgets.drop_zone import DropZone
+from app.services.speaker_rescue_service import SpeakerRescueService
+from app.workers.export_worker import ExportWorker
 from app.workers.transcription_worker import TranscriptionWorker
 
 
-class FilesPage(QWidget):
+class DropZone(QFrame):
+    file_dropped = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("DropZone")
+        self.setAcceptDrops(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(5)
+
+        title = QLabel("ARRASTRA AQUÍ EL AUDIO")
+        title.setObjectName("DropTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        subtitle = QLabel("o selecciónalo desde tu equipo")
+        subtitle.setObjectName("DropSubtitle")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls() and event.mimeData().urls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        urls = event.mimeData().urls()
+        if urls:
+            path = urls[0].toLocalFile()
+            if path:
+                self.file_dropped.emit(path)
+        event.acceptProposedAction()
+
+
+class FilesPage(QFrame):
     status_changed = Signal(str)
     history_changed = Signal()
 
-    SUPPORTED = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg"}
-    MAX_MB = 25.0
+    SUPPORTED_EXTENSIONS = {
+        ".wav", ".mp3", ".m4a", ".flac", ".ogg",
+        ".aac", ".wma", ".mp4", ".webm",
+    }
 
-    def __init__(self, config_service: ConfigService, parent=None) -> None:
-        super().__init__(parent)
-        self._config = config_service
-        self._history = HistoryService()
-        self._export = ExportService()
-        self._key_service = OpenAIKeyService()
-        self._audio_path: Path | None = None
-        self._current_history_id: str | None = None
-        self._thread: QThread | None = None
-        self._worker: TranscriptionWorker | None = None
+    def __init__(
+        self,
+        config_service: ConfigService,
+        engine: FasterWhisperEngine,
+        history_service: HistoryService,
+    ) -> None:
+        super().__init__()
+        self._config_service = config_service
+        self._engine = engine
+        self._history_service = history_service
+        self._diarization = DiarizationService()
+        self._rescue = SpeakerRescueService()
 
-        page, layout = create_page_header(
-            "TRANSCRIBIR",
-            "Alta precisión para entrevistas: transcripción y separación de hablantes en una sola operación.",
+        self._selected_file: Path | None = None
+        self._history_id: str | None = None
+        self._thread = None
+        self._worker = None
+        self._export_thread = None
+        self._export_worker = None
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(34, 28, 34, 28)
+        root.setSpacing(16)
+
+        title = QLabel("Transcribir entrevista")
+        title.setObjectName("PageTitle")
+        subtitle = QLabel(
+            "Procesamiento local · Faster-Whisper + doble verificación de hablantes"
         )
+        subtitle.setObjectName("PageSubtitle")
+        root.addWidget(title)
+        root.addWidget(subtitle)
 
-        top_card = QFrame()
-        top_card.setObjectName("Card")
-        top_layout = QVBoxLayout(top_card)
-        top_layout.setContentsMargins(22, 22, 22, 22)
-        top_layout.setSpacing(14)
+        source_card = QFrame()
+        source_card.setObjectName("Card")
+        source_layout = QVBoxLayout(source_card)
+        source_layout.setContentsMargins(20, 20, 20, 20)
+        source_layout.setSpacing(12)
 
-        self.drop_zone = DropZone()
-        self.drop_zone.file_dropped.connect(self._set_file)
-        top_layout.addWidget(self.drop_zone)
+        self._drop_zone = DropZone()
+        self._drop_zone.file_dropped.connect(lambda p: self._load_file(Path(p)))
+        source_layout.addWidget(self._drop_zone)
 
-        actions = QHBoxLayout()
-        self.select_btn = QPushButton("SELECCIONAR ARCHIVO")
-        self.select_btn.setObjectName("SecondaryButton")
-        self.select_btn.clicked.connect(self._choose_file)
+        file_row = QHBoxLayout()
+        self._select_button = QPushButton("Seleccionar archivo")
+        self._select_button.setObjectName("SecondaryButton")
+        self._select_button.clicked.connect(self._select_file)
 
-        self.file_label = QLabel("NINGÚN ARCHIVO SELECCIONADO")
-        self.file_label.setObjectName("FileName")
-        self.file_label.setWordWrap(True)
+        self._file_name = QLabel("Ningún archivo seleccionado")
+        self._file_name.setObjectName("FileName")
+        self._file_name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
-        self.transcribe_btn = QPushButton("TRANSCRIBIR")
-        self.transcribe_btn.setObjectName("PrimaryButton")
-        self.transcribe_btn.clicked.connect(self._start)
+        self._transcribe_button = QPushButton("Transcribir")
+        self._transcribe_button.setObjectName("PrimaryButton")
+        self._transcribe_button.setEnabled(False)
+        self._transcribe_button.clicked.connect(self._start_transcription)
 
-        actions.addWidget(self.select_btn)
-        actions.addWidget(self.file_label, 1)
-        actions.addWidget(self.transcribe_btn)
-        top_layout.addLayout(actions)
+        file_row.addWidget(self._select_button)
+        file_row.addWidget(self._file_name, 1)
+        file_row.addWidget(self._transcribe_button)
+        source_layout.addLayout(file_row)
 
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress.setTextVisible(False)
-        self.progress_label = QLabel("LISTO")
-        self.progress_label.setObjectName("Muted")
-        top_layout.addWidget(self.progress)
-        top_layout.addWidget(self.progress_label)
+        self._file_detail = QLabel(
+            "WAV, MP3, M4A, FLAC, OGG, AAC, WMA, MP4 y WEBM"
+        )
+        self._file_detail.setObjectName("Muted")
+        source_layout.addWidget(self._file_detail)
 
-        layout.addWidget(top_card)
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 100)
+        self._progress.setValue(0)
+        self._progress.setFormat("Listo")
+        source_layout.addWidget(self._progress)
+        root.addWidget(source_card)
 
         transcript_card = QFrame()
         transcript_card.setObjectName("Card")
         transcript_layout = QVBoxLayout(transcript_card)
-        transcript_layout.setContentsMargins(22, 22, 22, 22)
-        transcript_layout.setSpacing(12)
+        transcript_layout.setContentsMargins(20, 18, 20, 18)
+        transcript_layout.setSpacing(10)
 
-        heading_row = QHBoxLayout()
-        transcript_title = QLabel("TRANSCRIPCIÓN")
+        header = QHBoxLayout()
+        transcript_title = QLabel("Transcripción")
         transcript_title.setObjectName("SectionTitle")
-        self.quality_badge = QLabel("SIN PROCESAR")
-        self.quality_badge.setObjectName("BadgeNeutral")
-        heading_row.addWidget(transcript_title)
-        heading_row.addStretch()
-        heading_row.addWidget(self.quality_badge)
-        transcript_layout.addLayout(heading_row)
+        self._agent_button = QPushButton("Marcar Agente")
+        self._agent_button.setObjectName("AgentButton")
+        self._agent_button.clicked.connect(lambda: self._change_current_speaker(True))
+        self._client_button = QPushButton("Marcar Cliente")
+        self._client_button.setObjectName("ClientButton")
+        self._client_button.clicked.connect(lambda: self._change_current_speaker(False))
+        header.addWidget(transcript_title)
+        header.addStretch()
+        header.addWidget(self._agent_button)
+        header.addWidget(self._client_button)
+        transcript_layout.addLayout(header)
 
-        self.editor = QPlainTextEdit()
-        self.editor.setObjectName("TranscriptEditor")
-        self.editor.setPlaceholderText("La transcripción aparecerá aquí...")
-        self.editor.textChanged.connect(self._persist_edit)
-        transcript_layout.addWidget(self.editor, 1)
+        self._editor = QPlainTextEdit()
+        self._editor.setPlaceholderText("La transcripción aparecerá aquí.")
+        self._editor.setMinimumHeight(360)
+        self._editor.textChanged.connect(self._update_buttons)
+        self._editor.selectionChanged.connect(self._update_buttons)
+        transcript_layout.addWidget(self._editor, 1)
 
-        manual_row = QHBoxLayout()
-        agent_btn = QPushButton("MARCAR AGENTE")
-        agent_btn.setObjectName("AgentButton")
-        agent_btn.clicked.connect(lambda: self._relabel_current_line("AGENTE"))
-        client_btn = QPushButton("MARCAR CLIENTE")
-        client_btn.setObjectName("ClientButton")
-        client_btn.clicked.connect(lambda: self._relabel_current_line("CLIENTE"))
-        manual_row.addWidget(agent_btn)
-        manual_row.addWidget(client_btn)
-        manual_row.addStretch()
-        transcript_layout.addLayout(manual_row)
+        actions = QHBoxLayout()
+        self._txt_button = QPushButton("Exportar TXT")
+        self._word_button = QPushButton("Exportar Word")
+        self._update_history_button = QPushButton("Guardar cambios")
+        self._clear_button = QPushButton("Limpiar")
+        for button in (
+            self._txt_button,
+            self._word_button,
+            self._update_history_button,
+            self._clear_button,
+        ):
+            button.setObjectName("SecondaryButton")
 
-        export_row = QHBoxLayout()
-        copy_btn = QPushButton("COPIAR")
-        copy_btn.clicked.connect(self._copy)
-        txt_btn = QPushButton("EXPORTAR TXT")
-        txt_btn.clicked.connect(self._export_txt)
-        word_btn = QPushButton("EXPORTAR WORD")
-        word_btn.clicked.connect(self._export_word)
-        clear_btn = QPushButton("LIMPIAR")
-        clear_btn.setObjectName("DangerGhostButton")
-        clear_btn.clicked.connect(self._clear)
-        for btn in (copy_btn, txt_btn, word_btn):
-            btn.setObjectName("SecondaryButton")
-            export_row.addWidget(btn)
-        export_row.addStretch()
-        export_row.addWidget(clear_btn)
-        transcript_layout.addLayout(export_row)
+        self._txt_button.clicked.connect(lambda: self._start_export("txt"))
+        self._word_button.clicked.connect(lambda: self._start_export("docx"))
+        self._update_history_button.clicked.connect(self._update_history)
+        self._clear_button.clicked.connect(self._clear)
+        actions.addWidget(self._txt_button)
+        actions.addWidget(self._word_button)
+        actions.addWidget(self._update_history_button)
+        actions.addStretch()
+        actions.addWidget(self._clear_button)
+        transcript_layout.addLayout(actions)
 
-        layout.addWidget(transcript_card, 1)
+        root.addWidget(transcript_card, 1)
+        self._update_buttons()
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(page)
-
-    def refresh(self) -> None:
-        pass
-
-    def _choose_file(self) -> None:
+    def _select_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Seleccionar audio",
             "",
-            "Audio (*.mp3 *.mp4 *.mpeg *.mpga *.m4a *.wav *.webm *.ogg);;Todos (*.*)",
-            options=QFileDialog.Option.DontUseNativeDialog,
+            "Audio (*.wav *.mp3 *.m4a *.flac *.ogg *.aac *.wma *.mp4 *.webm);;Todos (*.*)",
         )
         if path:
-            self._set_file(path)
+            self._load_file(Path(path))
 
-    def _set_file(self, path: str) -> None:
-        candidate = Path(path)
-        if not candidate.is_file():
-            QMessageBox.warning(self, "Archivo", "EL ARCHIVO NO EXISTE.")
+    def _load_file(self, path: Path) -> None:
+        if self._is_busy():
             return
-        if candidate.suffix.lower() not in self.SUPPORTED:
-            QMessageBox.warning(self, "Formato", "FORMATO DE AUDIO NO COMPATIBLE.")
+        if not path.is_file() or path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
+            QMessageBox.warning(self, "Archivo", "Selecciona un archivo de audio compatible.")
             return
-        size_mb = candidate.stat().st_size / (1024 * 1024)
-        if size_mb > self.MAX_MB:
-            QMessageBox.warning(
-                self,
-                "Archivo demasiado grande",
-                f"EL ARCHIVO PESA {size_mb:.1f} MB. EL LÍMITE ACTUAL ES {self.MAX_MB:.0f} MB.",
+
+        self._selected_file = path
+        self._history_id = None
+        self._file_name.setText(path.name)
+        size_mb = path.stat().st_size / (1024 * 1024)
+        self._file_detail.setText(
+            f"{path.suffix.lstrip('.').upper()} · {size_mb:.1f} MB · Alta precisión local"
+        )
+        self._progress.setValue(0)
+        self._progress.setFormat("Archivo listo")
+        self._update_buttons()
+
+    def _start_transcription(self) -> None:
+        if self._selected_file is None or self._is_busy():
+            return
+
+        settings = self._config_service.load()
+        self._engine.set_profile("ALTA")
+
+        if not self._engine.is_ready():
+            QMessageBox.critical(
+                self, "Modelo", "El modelo Faster-Whisper Small no está instalado."
             )
             return
-        self._audio_path = candidate
-        self._current_history_id = None
-        self.file_label.setText(f"{candidate.name}  ·  {size_mb:.1f} MB")
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress_label.setText("LISTO PARA TRANSCRIBIR")
-        self.quality_badge.setText("ALTA PRECISIÓN")
-        self.quality_badge.setObjectName("BadgeReady")
-        self.quality_badge.style().unpolish(self.quality_badge)
-        self.quality_badge.style().polish(self.quality_badge)
-
-    def _start(self) -> None:
-        if self._thread is not None:
+        if not self._diarization.is_ready():
+            QMessageBox.critical(
+                self, "Hablantes", "Community-1 no está instalado o está incompleto."
+            )
             return
-        if self._audio_path is None:
-            QMessageBox.information(self, "Archivo", "SELECCIONA PRIMERO UN ARCHIVO DE AUDIO.")
-            return
-
-        api_key = self._key_service.get_key()
-        if not api_key:
-            QMessageBox.warning(
-                self,
-                "Configura la API",
-                "FALTA LA API KEY. VE A AJUSTES, GUÁRDALA Y VALIDA LA CONEXIÓN.",
+        if not self._rescue.is_ready():
+            QMessageBox.critical(
+                self, "Hablantes", "La segunda capa ECAPA no está instalada o está incompleta."
             )
             return
 
-        settings = self._config.load()
-        self._set_busy(True)
-        self.editor.clear()
-        self.quality_badge.setText("PROCESANDO")
-        self.progress.setRange(0, 0)
-        self.progress_label.setText("ENVIANDO AUDIO A ALTA PRECISIÓN...")
-        self.status_changed.emit("PROCESANDO AUDIO")
-
+        self._editor.clear()
+        self._history_id = None
         self._thread = QThread(self)
         self._worker = TranscriptionWorker(
-            audio_path=self._audio_path,
-            settings=settings,
-            api_key=api_key,
+            engine=self._engine,
+            audio_path=self._selected_file,
+            language=settings.language,
+            uppercase=settings.uppercase,
+            show_timestamps=settings.show_timestamps,
+            file_profile="ALTA",
+            diarization_enabled=True,
+            speaker_one_label=settings.speaker_one_label,
+            speaker_two_label=settings.speaker_two_label,
+            first_speaker_is_one=settings.first_speaker_agent,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
         self._worker.completed.connect(self._on_completed)
+        self._worker.warning.connect(self._on_warning)
         self._worker.failed.connect(self._on_failed)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.finished.connect(self._thread_finished)
+        self._set_busy(True)
         self._thread.start()
 
     def _on_progress(self, value: int, message: str) -> None:
-        if value < 0:
-            self.progress.setRange(0, 0)
-        else:
-            if self.progress.maximum() == 0:
-                self.progress.setRange(0, 100)
-            self.progress.setValue(max(0, min(100, value)))
-        self.progress_label.setText(message)
+        value = max(0, min(100, int(value)))
+        self._progress.setValue(value)
+        self._progress.setFormat(message)
         self.status_changed.emit(message)
 
-    def _on_completed(self, conversation) -> None:
-        self.editor.blockSignals(True)
-        self.editor.setPlainText(conversation.text)
-        self.editor.blockSignals(False)
+    def _on_completed(self, conversation: Conversation) -> None:
+        settings = self._config_service.load()
+        text = conversation.text.strip()
+        if settings.uppercase:
+            text = text.upper()
+        self._editor.setPlainText(text)
 
-        count = int(getattr(conversation, "speaker_count", 0) or 0)
-        confidence = float(getattr(conversation, "role_confidence", 0.0) or 0.0)
-        warning = str(getattr(conversation, "warning", "") or "").strip()
+        entry = self._history_service.add_entry(
+            source_path=str(self._selected_file or ""),
+            text=text,
+            profile="ALTA PRECISIÓN LOCAL",
+            language=settings.language,
+        )
+        self._history_id = entry["id"]
+        self.history_changed.emit()
+        self._progress.setValue(100)
+        self._progress.setFormat("Finalizado")
+        self.status_changed.emit("LISTO")
+        self._update_buttons()
 
-        if count >= 2:
-            self.quality_badge.setText(f"{count} HABLANTES · ROLES {confidence:.0%}")
-            self.quality_badge.setObjectName("BadgeSuccess")
-        else:
-            self.quality_badge.setText("REVISAR HABLANTES")
-            self.quality_badge.setObjectName("BadgeWarning")
-        self.quality_badge.style().unpolish(self.quality_badge)
-        self.quality_badge.style().polish(self.quality_badge)
-
-        if self._audio_path is not None:
-            entry = self._history.add_entry(
-                source_path=str(self._audio_path),
-                text=conversation.text,
-                profile="ALTA PRECISIÓN",
-                language=conversation.language,
-            )
-            self._current_history_id = entry.get("id")
-            self.history_changed.emit()
-
-        self.progress.setRange(0, 100)
-        self.progress.setValue(100)
-        self.progress_label.setText("TRANSCRIPCIÓN FINALIZADA")
-        self.status_changed.emit("TRANSCRIPCIÓN FINALIZADA")
-        self._set_busy(False)
-
-        if warning:
-            QMessageBox.information(self, "Resultado", warning)
+    def _on_warning(self, message: str) -> None:
+        QMessageBox.warning(self, "Identificación de hablantes", message)
 
     def _on_failed(self, message: str) -> None:
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress_label.setText("NO SE PUDO COMPLETAR")
-        self.quality_badge.setText("ERROR")
-        self.quality_badge.setObjectName("BadgeWarning")
-        self.quality_badge.style().unpolish(self.quality_badge)
-        self.quality_badge.style().polish(self.quality_badge)
-        self.status_changed.emit("ERROR DE TRANSCRIPCIÓN")
-        self._set_busy(False)
+        self._progress.setValue(0)
+        self._progress.setFormat("Error")
+        self.status_changed.emit("ERROR")
         QMessageBox.critical(self, "Transcripción", message)
 
     def _thread_finished(self) -> None:
@@ -294,81 +322,136 @@ class FilesPage(QWidget):
         self._set_busy(False)
 
     def _set_busy(self, busy: bool) -> None:
-        self.transcribe_btn.setEnabled(not busy)
-        self.select_btn.setEnabled(not busy)
-        self.transcribe_btn.setText("PROCESANDO..." if busy else "TRANSCRIBIR")
+        self._select_button.setEnabled(not busy)
+        self._transcribe_button.setEnabled(not busy and self._selected_file is not None)
+        self._clear_button.setEnabled(not busy)
+        self._update_buttons()
 
-    def _relabel_current_line(self, role: str) -> None:
-        text = self.editor.toPlainText()
-        if not text.strip():
-            return
-        cursor = self.editor.textCursor()
-        block = cursor.block()
-        line = block.text()
-        if not line.strip():
-            return
-
-        settings = self._config.load()
-        label = settings.speaker_one_label if role == "AGENTE" else settings.speaker_two_label
-        prefix_match = re.match(r"^(\s*\[[^\]]+\]\s*)?([^:\n]{1,50}:\s*)?(.*)$", line)
-        if not prefix_match:
-            return
-        timestamp = prefix_match.group(1) or ""
-        body = prefix_match.group(3).strip()
-        replacement = f"{timestamp}{label}: {body}"
-
-        block_cursor = QTextCursor(block)
-        block_cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
-        block_cursor.insertText(replacement)
-        self._persist_edit()
-
-    def _persist_edit(self) -> None:
-        if self._current_history_id:
-            self._history.update_text(self._current_history_id, self.editor.toPlainText())
-
-    def _copy(self) -> None:
-        text = self.editor.toPlainText().strip()
-        if text:
-            QApplication.clipboard().setText(text)
-            self.status_changed.emit("TRANSCRIPCIÓN COPIADA")
-
-    def _export_txt(self) -> None:
-        text = self.editor.toPlainText().strip()
-        if not text:
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar TXT", "transcripcion.txt", "Texto (*.txt)")
-        if path:
-            self._export.export_txt(Path(path), text)
-            self.status_changed.emit("TXT EXPORTADO")
-
-    def _export_word(self) -> None:
-        text = self.editor.toPlainText().strip()
-        if not text:
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar Word", "transcripcion.docx", "Word (*.docx)")
-        if path:
-            source = self._audio_path.name if self._audio_path else ""
-            self._export.export_docx(Path(path), text, source)
-            self.status_changed.emit("WORD EXPORTADO")
+    def _is_busy(self) -> bool:
+        return self._thread is not None and self._thread.isRunning()
 
     def _clear(self) -> None:
-        self.editor.clear()
-        self._audio_path = None
-        self._current_history_id = None
-        self.file_label.setText("NINGÚN ARCHIVO SELECCIONADO")
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress_label.setText("LISTO")
-        self.quality_badge.setText("SIN PROCESAR")
-        self.status_changed.emit("LISTO")
+        if self._is_busy():
+            return
+        self._selected_file = None
+        self._history_id = None
+        self._file_name.setText("Ningún archivo seleccionado")
+        self._file_detail.setText("WAV, MP3, M4A, FLAC, OGG, AAC, WMA, MP4 y WEBM")
+        self._editor.clear()
+        self._progress.setValue(0)
+        self._progress.setFormat("Listo")
+        self._update_buttons()
 
     def load_history_entry(self, entry: dict) -> None:
-        self._current_history_id = entry.get("id")
-        source = entry.get("source_path", "")
-        self._audio_path = Path(source) if source else None
-        self.file_label.setText(entry.get("source_name", "HISTORIAL"))
-        self.editor.blockSignals(True)
-        self.editor.setPlainText(entry.get("text", ""))
-        self.editor.blockSignals(False)
-        self.quality_badge.setText("CARGADO DEL HISTORIAL")
-        self.progress_label.setText("EDICIÓN DISPONIBLE")
+        source_path = str(entry.get("source_path", ""))
+        self._selected_file = Path(source_path) if source_path else None
+        self._history_id = str(entry.get("id", "")) or None
+        self._file_name.setText(str(entry.get("source_name", "Transcripción recuperada")))
+        self._file_detail.setText(source_path or "Origen no disponible")
+        self._editor.setPlainText(str(entry.get("text", "")))
+        self._progress.setValue(100)
+        self._progress.setFormat("Recuperado del historial")
+        self._update_buttons()
+
+    def _change_current_speaker(self, use_agent: bool) -> None:
+        cursor = self._editor.textCursor()
+        settings = self._config_service.load()
+        agent = settings.speaker_one_label
+        client = settings.speaker_two_label
+        new_label = agent if use_agent else client
+
+        if cursor.hasSelection():
+            source = cursor.selectedText().replace("\u2029", "\n")
+        else:
+            cursor.select(cursor.SelectionType.BlockUnderCursor)
+            source = cursor.selectedText().replace("\u2029", "\n")
+
+        if not source.strip():
+            return
+        cursor.insertText(self._replace_speaker_labels(source, new_label, agent, client))
+        self._editor.setTextCursor(cursor)
+
+    @staticmethod
+    def _replace_speaker_labels(
+        text: str,
+        new_label: str,
+        agent_label: str,
+        client_label: str,
+    ) -> str:
+        labels = rf"(?:{re.escape(agent_label)}|{re.escape(client_label)})"
+        output = []
+        for line in text.splitlines():
+            if not line.strip():
+                output.append(line)
+                continue
+            timestamp_match = re.match(r"^\s*(\[[^\]]+\])\s*", line)
+            timestamp = f"{timestamp_match.group(1)} " if timestamp_match else ""
+            body = re.sub(r"^\s*\[[^\]]+\]\s*", "", line)
+            body = re.sub(rf"^\s*{labels}\s*:\s*", "", body, flags=re.I)
+            output.append(f"{timestamp}{new_label}: {body.strip()}")
+        return "\n".join(output)
+
+    def _update_buttons(self) -> None:
+        has_text = bool(self._editor.toPlainText().strip())
+        busy = self._is_busy()
+        self._transcribe_button.setEnabled(not busy and self._selected_file is not None)
+        for button in (
+            self._agent_button,
+            self._client_button,
+            self._txt_button,
+            self._word_button,
+            self._update_history_button,
+        ):
+            button.setEnabled(has_text and not busy)
+        self._clear_button.setEnabled(
+            not busy and (self._selected_file is not None or has_text)
+        )
+
+    def _update_history(self) -> None:
+        if not self._history_id:
+            return
+        self._history_service.update_text(self._history_id, self._editor.toPlainText())
+        self.history_changed.emit()
+        self.status_changed.emit("CAMBIOS GUARDADOS")
+
+    def _start_export(self, kind: str) -> None:
+        text = self._editor.toPlainText().strip()
+        if not text:
+            return
+
+        default_name = (
+            (self._selected_file.stem if self._selected_file else "transcripcion")
+            + (".txt" if kind == "txt" else ".docx")
+        )
+        if kind == "txt":
+            destination, _ = QFileDialog.getSaveFileName(
+                self, "Exportar TXT", default_name, "Texto (*.txt)"
+            )
+        else:
+            destination, _ = QFileDialog.getSaveFileName(
+                self, "Exportar Word", default_name, "Word (*.docx)"
+            )
+        if not destination:
+            return
+
+        self._export_thread = QThread(self)
+        self._export_worker = ExportWorker(
+            destination=Path(destination),
+            text=text,
+            source_name=self._selected_file.name if self._selected_file else "",
+            export_type=kind,
+        )
+        self._export_worker.moveToThread(self._export_thread)
+        self._export_thread.started.connect(self._export_worker.run)
+        self._export_worker.completed.connect(self._export_done)
+        self._export_worker.failed.connect(self._export_failed)
+        self._export_worker.finished.connect(self._export_thread.quit)
+        self._export_worker.finished.connect(self._export_worker.deleteLater)
+        self._export_thread.finished.connect(self._export_thread.deleteLater)
+        self._export_thread.start()
+
+    def _export_done(self, path: str) -> None:
+        QMessageBox.information(self, "Exportación", f"Archivo guardado:\n{path}")
+
+    def _export_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Exportación", message)

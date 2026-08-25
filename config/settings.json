@@ -1,9 +1,12 @@
 {
   "language": "ES",
+  "transcription_engine": "FASTER-WHISPER",
+  "file_profile": "ALTA",
+  "live_profile": "ALTA",
   "uppercase": true,
+  "first_speaker_agent": false,
   "show_timestamps": true,
   "speaker_one_label": "AGENTE",
   "speaker_two_label": "CLIENTE",
-  "agent_reference_path": "",
-  "role_model": "gpt-5.6-luna"
+  "diarization_enabled": true
 }

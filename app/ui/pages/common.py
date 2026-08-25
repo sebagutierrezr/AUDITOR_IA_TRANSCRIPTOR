@@ -1,18 +1,6 @@
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel,QVBoxLayout,QWidget
 
-
-def create_page_header(title: str, subtitle: str):
-    page = QWidget()
-    layout = QVBoxLayout(page)
-    layout.setContentsMargins(30, 26, 30, 26)
-    layout.setSpacing(16)
-
-    title_label = QLabel(title)
-    title_label.setObjectName("PageTitle")
-    subtitle_label = QLabel(subtitle)
-    subtitle_label.setObjectName("PageSubtitle")
-    subtitle_label.setWordWrap(True)
-
-    layout.addWidget(title_label)
-    layout.addWidget(subtitle_label)
-    return page, layout
+def create_page_header(title,subtitle):
+    page=QWidget(); layout=QVBoxLayout(page); layout.setContentsMargins(34,30,34,30); layout.setSpacing(14)
+    t=QLabel(title); t.setObjectName("PageTitle"); s=QLabel(subtitle); s.setObjectName("PageSubtitle"); s.setWordWrap(True)
+    layout.addWidget(t); layout.addWidget(s); return page,layout
