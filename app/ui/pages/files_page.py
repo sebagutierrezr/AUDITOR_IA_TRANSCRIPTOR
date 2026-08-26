@@ -9,6 +9,8 @@ from pathlib import Path
 from PySide6.QtCore import (
     QProcess,
     QProcessEnvironment,
+    QStandardPaths,
+    QDir,
     QThread,
     Qt,
     Signal,
@@ -98,6 +100,7 @@ class FilesPage(QFrame):
         self._history_id: str | None = None
 
         self._process: QProcess | None = None
+        self._file_dialog: QFileDialog | None = None
         self._stdout_buffer = ""
         self._job_path: Path | None = None
         self._result_path: Path | None = None
@@ -242,14 +245,63 @@ class FilesPage(QFrame):
         self._update_buttons()
 
     def _select_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Seleccionar audio",
-            "",
-            "Audio (*.wav *.mp3 *.m4a *.flac *.ogg *.aac *.wma *.mp4 *.webm);;Todos (*.*)",
+        """Abre un selector Qt no nativo y no modal."""
+        if self._is_busy():
+            return
+
+        if (
+            self._file_dialog is not None
+            and self._file_dialog.isVisible()
+        ):
+            self._file_dialog.raise_()
+            self._file_dialog.activateWindow()
+            return
+
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Seleccionar audio")
+        dialog.setOption(
+            QFileDialog.Option.DontUseNativeDialog,
+            True,
         )
-        if path:
-            self._load_file(Path(path))
+        dialog.setFileMode(
+            QFileDialog.FileMode.ExistingFile
+        )
+        dialog.setAcceptMode(
+            QFileDialog.AcceptMode.AcceptOpen
+        )
+        dialog.setNameFilters(
+            [
+                "Audio (*.wav *.mp3 *.m4a *.flac *.ogg *.aac *.wma *.mp4 *.webm)",
+                "Todos los archivos (*.*)",
+            ]
+        )
+
+        start_dir = (
+            QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.DocumentsLocation
+            )
+            or QDir.homePath()
+        )
+        dialog.setDirectory(start_dir)
+
+        dialog.fileSelected.connect(
+            self._on_file_selected
+        )
+        dialog.finished.connect(
+            self._on_file_dialog_finished
+        )
+
+        self._file_dialog = dialog
+        dialog.open()
+
+    def _on_file_selected(self, value: str) -> None:
+        self._load_file(Path(value))
+
+    def _on_file_dialog_finished(self, result: int) -> None:
+        dialog = self._file_dialog
+        self._file_dialog = None
+        if dialog is not None:
+            dialog.deleteLater()
 
     def _load_file(self, path: Path) -> None:
         """Solo guarda la ruta. No abre audio, no lee metadata y no carga modelos."""

@@ -93,6 +93,9 @@ jobs:
           python -m unittest tests.test_file_worker_protocol -v
           if ($LASTEXITCODE -ne 0) { throw "File-worker protocol test fallo." }
 
+          python -m unittest tests.test_file_selector_stability -v
+          if ($LASTEXITCODE -ne 0) { throw "File selector stability test fallo." }
+
       - name: Instalar herramientas de build
         shell: pwsh
         run: |
@@ -110,7 +113,7 @@ jobs:
       - name: Self-test del EXE real
         shell: pwsh
         run: |
-          $folder = "dist\AUDITOR_IA_7.2.0_BUILD"
+          $folder = "dist\AUDITOR_IA_7.2.1_BUILD"
           $exe = Join-Path $folder "AUDITOR_IA.exe"
           if (-not (Test-Path $exe)) { throw "AUDITOR_IA.exe no existe." }
 
@@ -135,8 +138,8 @@ jobs:
       - name: Guardar instalador
         uses: actions/upload-artifact@v4
         with:
-          name: AUDITOR_IA_7.2.0_Setup
-          path: release/AUDITOR_IA_7.2.0_Setup.exe
+          name: AUDITOR_IA_7.2.1_Setup
+          path: release/AUDITOR_IA_7.2.1_Setup.exe
           if-no-files-found: error
           compression-level: 0
 
@@ -147,6 +150,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" `
-            "release/AUDITOR_IA_7.2.0_Setup.exe" `
-            --title "AUDITOR IA 7.2.0 LOCAL PRO" `
+            "release/AUDITOR_IA_7.2.1_Setup.exe" `
+            --title "AUDITOR IA 7.2.1 LOCAL PRO" `
             --notes "Versión 100 % local: Faster-Whisper Small + Community-1 + ECAPA Rescue. Sin API, sin pagos por uso y solo instalador Windows."

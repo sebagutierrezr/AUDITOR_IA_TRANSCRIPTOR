@@ -1,4 +1,4 @@
-# AUDITOR IA - TRANSCRIPTOR 7.2.0
+# AUDITOR IA - TRANSCRIPTOR 7.2.1
 
 Aplicación Windows local para transcribir entrevistas con identificación AGENTE / CLIENTE.
 
@@ -22,4 +22,4 @@ La interfaz y la inteligencia artificial se ejecutan en procesos separados. Fast
 - Sin pagos por uso.
 - Solo instalador Windows.
 
-El usuario final instala únicamente `AUDITOR_IA_7.2.0_Setup.exe`.
+El usuario final instala únicamente `AUDITOR_IA_7.2.1_Setup.exe`.

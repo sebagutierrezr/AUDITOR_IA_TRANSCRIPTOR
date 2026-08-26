@@ -1,4 +1,4 @@
-AUDITOR IA - TRANSCRIPTOR 7.2.0
+AUDITOR IA - TRANSCRIPTOR 7.2.1
 ESTABLE · PROCESAMIENTO NO BLOQUEANTE
 ================================================
 
@@ -9,7 +9,7 @@ que mostraba la ventana. Aunque se utilizara QThread, PyTorch, pyannote y
 Faster-Whisper podían consumir suficiente CPU para que Windows mostrara
 "No responde".
 
-ARQUITECTURA 7.2.0
+ARQUITECTURA 7.2.1
 ------------------
 INTERFAZ WINDOWS
       |
@@ -54,12 +54,12 @@ SE CONSERVA
 
 DISTRIBUCIÓN
 ------------
-AUDITOR_IA_7.2.0_Setup.exe
+AUDITOR_IA_7.2.1_Setup.exe
 
 SUBIR
 -----
 git add .
-git commit -m "AUDITOR IA 7.2.0 procesamiento no bloqueante"
+git commit -m "AUDITOR IA 7.2.1 procesamiento no bloqueante"
 git push origin main
 
 Luego:
