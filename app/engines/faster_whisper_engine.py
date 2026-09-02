@@ -118,7 +118,7 @@ class FasterWhisperEngine(SpeechEngine):
                 message = (
                     f"EL MODELO {self._model_name.upper()} "
                     "NO ESTÁ INSTALADO O ESTÁ INCOMPLETO. "
-                    "REINSTALA AUDITOR IA 7.2.1."
+                    "REINSTALA AUDITOR IA 8.0.0."
                 )
                 self._logger.error(message)
                 raise RuntimeError(message)

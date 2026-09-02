@@ -1,25 +1,13 @@
-# AUDITOR IA - TRANSCRIPTOR 7.2.1
+# AUDITOR IA - TRANSCRIPTOR 8.0.0
 
-Aplicación Windows local para transcribir entrevistas con identificación AGENTE / CLIENTE.
+Motor de archivos reconstruido con **NVIDIA NeMo-Speech.cpp + Nemotron 3.5 ASR + SortFormer v2**.
 
-## Arquitectura de archivos
+- Español forzado (`es-ES`).
+- Diarización integrada a nivel palabra.
+- Reconstrucción de turnos por `speaker_tag` de cada palabra.
+- Clasificación contextual posterior a AGENTE / CLIENTE.
+- Sin API ni pagos por uso.
+- Modelos incluidos en el Setup.
+- En Vivo se conserva sobre el motor estable previo mientras se valida migración nativa de captura.
 
-La interfaz y la inteligencia artificial se ejecutan en procesos separados. Faster-Whisper, Community-1 y ECAPA no bloquean el proceso gráfico.
-
-## Funciones
-
-- Transcripción de archivos.
-- Transcripción en vivo.
-- Faster-Whisper Small.
-- Community-1.
-- ECAPA Rescue.
-- Timestamps por palabra.
-- Identificación contextual AGENTE / CLIENTE.
-- Corrección manual.
-- Historial.
-- Exportación TXT y Word.
-- Sin API.
-- Sin pagos por uso.
-- Solo instalador Windows.
-
-El usuario final instala únicamente `AUDITOR_IA_7.2.1_Setup.exe`.
+El workflow de GitHub compila el runtime CPU oficial de NVIDIA, convierte los modelos públicos a GGUF Q8 y genera `AUDITOR_IA_8.0.0_Setup.exe`.

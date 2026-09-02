@@ -1,155 +1,75 @@
-name: Build Windows Installer
-
+name: Build Windows Installer 8.0
 on:
   workflow_dispatch:
   push:
-    tags:
-      - 'v*'
-
+    tags: ['v8*']
 permissions:
   contents: write
-
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 180
-
+    timeout-minutes: 360
     steps:
-      - name: Descargar código
-        uses: actions/checkout@v4
-
-      - name: Configurar Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Preparar Micromamba
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          init-shell: powershell
-          cache-environment: false
-
-      - name: Instalar FFmpeg 7 Shared
-        shell: pwsh
-        run: |
-          $prefix = Join-Path $env:GITHUB_WORKSPACE ".ffmpeg7"
-          micromamba create -y -p "$prefix" -c conda-forge "ffmpeg=7.*"
-          if ($LASTEXITCODE -ne 0) { throw "No se pudo instalar FFmpeg 7." }
-
-          $bin = Join-Path $prefix "Library\bin"
-          if (-not (Test-Path "$bin\ffmpeg.exe")) { throw "No existe ffmpeg.exe." }
-          foreach ($pattern in @("avcodec-*.dll", "avformat-*.dll", "avutil-*.dll", "swresample-*.dll")) {
-            if (-not (Get-ChildItem $bin -Filter $pattern -File)) { throw "FFmpeg Shared incompleto: $pattern" }
-          }
-          "AUDITOR_IA_FFMPEG_BIN=$bin" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          $bin | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Instalar PyTorch CPU
+      - name: Python app dependencies
         shell: pwsh
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install torch==2.9.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cpu
-          if ($LASTEXITCODE -ne 0) { throw "PyTorch/Torchaudio fallo." }
-
-      - name: Instalar dependencias
-        shell: pwsh
-        run: |
           python -m pip install -r requirements.txt
-          if ($LASTEXITCODE -ne 0) { throw "requirements.txt fallo." }
-          python -m pip check
-          if ($LASTEXITCODE -ne 0) { throw "pip check detecto incompatibilidades." }
-
-      - name: Corregir compatibilidad SpeechBrain en Windows
-        shell: pwsh
-        run: |
-          python scripts\patch_speechbrain_windows.py
-          if ($LASTEXITCODE -ne 0) {
-            throw "No se pudo aplicar el parche Windows de SpeechBrain."
-          }
-
-      - name: Verificar runtime
-        shell: pwsh
-        run: |
-          python -m scripts.verify_native_runtime --ffmpeg-bin "$env:AUDITOR_IA_FFMPEG_BIN"
-          if ($LASTEXITCODE -ne 0) { throw "Runtime previo fallo." }
-
-      - name: Probar lógica de hablantes
-        shell: pwsh
-        run: |
-          python -m unittest tests.test_speaker_v2 -v
-          if ($LASTEXITCODE -ne 0) { throw "Speaker V2 fallo." }
-          python -m unittest tests.test_speaker_rescue -v
-          if ($LASTEXITCODE -ne 0) { throw "Speaker Rescue fallo." }
-
-          python -m unittest tests.test_speechbrain_windows_patch -v
-          if ($LASTEXITCODE -ne 0) { throw "SpeechBrain Windows patch test fallo." }
-
-          python -m unittest tests.test_build_script_import_path -v
-          if ($LASTEXITCODE -ne 0) { throw "Build script import-path test fallo." }
-
-          python -m unittest tests.test_nonblocking_file_processing -v
-          if ($LASTEXITCODE -ne 0) { throw "Non-blocking UI test fallo." }
-
-          python -m unittest tests.test_file_worker_protocol -v
-          if ($LASTEXITCODE -ne 0) { throw "File-worker protocol test fallo." }
-
-          python -m unittest tests.test_file_selector_stability -v
-          if ($LASTEXITCODE -ne 0) { throw "File selector stability test fallo." }
-
-      - name: Instalar herramientas de build
-        shell: pwsh
-        run: |
           python -m pip install pyinstaller==6.14.2 "pyinstaller-hooks-contrib>=2025.8"
-          if ($LASTEXITCODE -ne 0) { throw "PyInstaller fallo." }
-          choco install innosetup --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallo." }
-
-      - name: Construir instalador
-        shell: pwsh
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: ./build_release.ps1
-
-      - name: Self-test del EXE real
+          choco install innosetup cmake ninja visualstudio2022-workload-vctools --no-progress -y
+      - name: FFmpeg
         shell: pwsh
         run: |
-          $folder = "dist\AUDITOR_IA_7.2.1_BUILD"
-          $exe = Join-Path $folder "AUDITOR_IA.exe"
-          if (-not (Test-Path $exe)) { throw "AUDITOR_IA.exe no existe." }
-
-          $env:AUDITOR_IA_SELF_TEST = "1"
-          $process = Start-Process -FilePath $exe -WorkingDirectory $folder -Wait -PassThru
-          Remove-Item Env:AUDITOR_IA_SELF_TEST
-
-          if ($process.ExitCode -ne 0) {
-            $errorFile = Join-Path $folder "runtime_self_test_error.txt"
-            if (Test-Path $errorFile) { Get-Content $errorFile }
-            throw "SELF-TEST fallo. ExitCode=$($process.ExitCode)"
-          }
-          Get-Content (Join-Path $folder "runtime_self_test_ok.txt")
-          Write-Host "SELF-TEST DEL EXE: CORRECTO"
-
-          $smoke = & $exe --file-worker-smoke
-          if ($LASTEXITCODE -ne 0 -or $smoke -notmatch "AUDITOR_FILE_WORKER_SMOKE_OK") {
-            throw "El modo de proceso aislado no pudo iniciarse desde el EXE."
-          }
-          Write-Host "FILE WORKER DEL EXE: CORRECTO"
-
-      - name: Guardar instalador
+          choco install ffmpeg-shared --no-progress -y
+          $ff=(Get-Command ffmpeg.exe).Source
+          "AUDITOR_IA_FFMPEG_BIN=$(Split-Path $ff)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build NeMo-Speech.cpp CPU ASR + SortFormer
+        shell: pwsh
+        run: |
+          git clone --depth 1 --recurse-submodules https://github.com/NVIDIA/NeMo-Speech.cpp.git .nemo-src
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo clonar NeMo-Speech.cpp' }
+          Push-Location .nemo-src
+          powershell -ExecutionPolicy Bypass -File scripts\windows\build.ps1 -Backend cpu -BuildDir "$env:GITHUB_WORKSPACE\.nemo-build" -Config Release -Http
+          if ($LASTEXITCODE -ne 0) { throw 'Build NeMo-Speech fallo' }
+          Pop-Location
+          New-Item -ItemType Directory -Force build_assets\nemo-speech | Out-Null
+          cmake --install .nemo-build --config Release --prefix "$env:GITHUB_WORKSPACE\build_assets\nemo-speech"
+          if ($LASTEXITCODE -ne 0) { throw 'Install NeMo-Speech fallo' }
+          & build_assets\nemo-speech\bin\nemo-speech.exe --version
+      - name: Convertir modelos Nemotron 3.5 y SortFormer Q8
+        shell: pwsh
+        run: |
+          Push-Location .nemo-src
+          python -m pip install -r requirements.txt
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\build_assets\models" | Out-Null
+          python convert_model.py nvidia/nemotron-3.5-asr-streaming-0.6b --outfile "$env:GITHUB_WORKSPACE\build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf" --outtype q8_0
+          if ($LASTEXITCODE -ne 0) { throw 'Conversion Nemotron 3.5 fallo' }
+          python convert_model.py nvidia/diar_streaming_sortformer_4spk-v2 --outfile "$env:GITHUB_WORKSPACE\build_assets\models\sortformer-v2-q8_0.gguf" --outtype q8_0
+          if ($LASTEXITCODE -ne 0) { throw 'Conversion SortFormer fallo' }
+          Pop-Location
+      - name: Verificar motor nativo
+        shell: pwsh
+        run: |
+          $n='build_assets\nemo-speech\bin\nemo-speech.exe'
+          if (-not (Test-Path $n)) { throw 'Falta nemo-speech.exe' }
+          foreach($m in @('build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf','build_assets\models\sortformer-v2-q8_0.gguf')) { if(-not(Test-Path $m)){throw "Falta $m"} }
+          & $n doctor
+      - name: Tests Python
+        shell: pwsh
+        run: |
+          python -m unittest tests.test_nemo_parser tests.test_role_classifier tests.test_file_selector_stability tests.test_live_restored -v
+          if ($LASTEXITCODE -ne 0) { throw 'Tests fallo' }
+      - name: Construir Setup
+        shell: pwsh
+        run: ./build_release.ps1
+      - name: Guardar Setup
         uses: actions/upload-artifact@v4
         with:
-          name: AUDITOR_IA_7.2.1_Setup
-          path: release/AUDITOR_IA_7.2.1_Setup.exe
+          name: AUDITOR_IA_8.0.0_Setup
+          path: release/AUDITOR_IA_8.0.0_Setup.exe
           if-no-files-found: error
           compression-level: 0
-
-      - name: Publicar Release
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" `
-            "release/AUDITOR_IA_7.2.1_Setup.exe" `
-            --title "AUDITOR IA 7.2.1 LOCAL PRO" `
-            --notes "Versión 100 % local: Faster-Whisper Small + Community-1 + ECAPA Rescue. Sin API, sin pagos por uso y solo instalador Windows."

@@ -1,38 +1,24 @@
-#define MyAppName "AUDITOR IA"
-#define MyAppVersion "7.2.1"
-#define MyAppPublisher "AUDITOR IA"
+#define MyAppName "AUDITOR IA - TRANSCRIPTOR"
+#define MyAppVersion "8.0.0"
 #define MyAppExeName "AUDITOR_IA.exe"
-
 [Setup]
-AppId={{D9896A93-56F3-45AB-B5E3-6C19FF22F060}
+AppId={{A4EAC7A3-1DD9-4C0E-9C13-AUDITORIA800}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\AUDITOR IA
+DefaultDirName={autopf}\AUDITOR IA
 DefaultGroupName=AUDITOR IA
-DisableProgramGroupPage=yes
 OutputDir=..\release
-OutputBaseFilename=AUDITOR_IA_7.2.1_Setup
-SetupIconFile=..\resources\logo.ico
-UninstallDisplayIcon={app}\{#MyAppExeName}
-Compression=lzma2
+OutputBaseFilename=AUDITOR_IA_8.0.0_Setup
+Compression=lzma2/ultra64
 SolidCompression=yes
-WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=lowest
-CloseApplications=yes
-RestartApplications=no
-
+SetupIconFile=..\resources\logo.ico
+PrivilegesRequired=admin
 [Files]
-Source: "..\dist\AUDITOR_IA_7.2.1_BUILD\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-
+Source: "..\dist\AUDITOR_IA_8.0.0_BUILD\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
 Name: "{autoprograms}\AUDITOR IA"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\AUDITOR IA"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-
-[Tasks]
-Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: unchecked
-
+Name: "{autodesktop}\AUDITOR IA"; Filename: "{app}\{#MyAppExeName}"
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir AUDITOR IA"; Flags: nowait postinstall skipifsilent

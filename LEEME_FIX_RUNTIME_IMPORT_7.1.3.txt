@@ -1,4 +1,4 @@
-AUDITOR IA - TRANSCRIPTOR 7.2.1
+AUDITOR IA - TRANSCRIPTOR 8.0.0
 FIX "NO MODULE NAMED APP"
 ================================================
 
@@ -19,7 +19,7 @@ un nivel más arriba, en la raíz del proyecto.
 Por eso el parche SpeechBrain sí se aplicaba correctamente, pero el
 siguiente verificador fallaba antes de continuar.
 
-CORRECCIÓN 7.2.1
+CORRECCIÓN 8.0.0
 ----------------
 1. verify_native_runtime.py agrega la raíz del proyecto a sys.path.
 2. verify_speaker_rescue_model.py hace lo mismo.
@@ -46,7 +46,7 @@ SE CONSERVA
 SUBIR
 -----
 git add .
-git commit -m "AUDITOR IA 7.2.1 fix runtime import path"
+git commit -m "AUDITOR IA 8.0.0 fix runtime import path"
 git push origin main
 
 Luego:

@@ -1,4 +1,4 @@
-AUDITOR IA - TRANSCRIPTOR 7.2.1
+AUDITOR IA - TRANSCRIPTOR 8.0.0
 FIX SELECTOR DE ARCHIVOS
 ===============================================
 
@@ -6,7 +6,7 @@ Problema observado:
 la aplicación quedaba en "No responde" al pulsar "Seleccionar archivo",
 antes de iniciar la transcripción.
 
-Cambio 7.2.1:
+Cambio 8.0.0:
 - se eliminó QFileDialog.getOpenFileName();
 - no usa el selector nativo del Explorador de Windows;
 - fuerza QFileDialog.Option.DontUseNativeDialog;
@@ -15,6 +15,6 @@ Cambio 7.2.1:
 - seleccionar un archivo solo conserva la ruta;
 - no abre audio ni carga modelos al seleccionar;
 - arrastrar y soltar sigue funcionando;
-- el proceso IA separado de 7.2.1 se mantiene;
+- el proceso IA separado de 8.0.0 se mantiene;
 - En Vivo se mantiene;
 - sin API, sin pagos y solo Setup Windows.

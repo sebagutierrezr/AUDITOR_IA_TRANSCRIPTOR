@@ -116,7 +116,7 @@ class FilesPage(QFrame):
         title = QLabel("Transcribir entrevista")
         title.setObjectName("PageTitle")
         subtitle = QLabel(
-            "Procesamiento local aislado · la interfaz permanece disponible mientras trabaja la IA"
+            "Nemotron 3.5 + SortFormer · transcripción y hablantes por palabra"
         )
         subtitle.setObjectName("PageSubtitle")
         root.addWidget(title)
