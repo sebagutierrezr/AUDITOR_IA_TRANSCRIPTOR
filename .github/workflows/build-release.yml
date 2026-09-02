@@ -1,71 +1,162 @@
 name: Build Windows Installer 8.0
+
 on:
   workflow_dispatch:
   push:
     tags: ['v8*']
+
 permissions:
   contents: write
+
 jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 360
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Python app dependencies
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller==6.14.2 "pyinstaller-hooks-contrib>=2025.8"
           choco install innosetup cmake ninja visualstudio2022-workload-vctools --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Fallo instalando dependencias de compilacion.' }
+
       - name: FFmpeg
         shell: pwsh
         run: |
-          choco install ffmpeg-shared --no-progress -y
-          $ff=(Get-Command ffmpeg.exe).Source
-          "AUDITOR_IA_FFMPEG_BIN=$(Split-Path $ff)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $ErrorActionPreference = 'Stop'
+
+          $ffmpegRoot = Join-Path $env:RUNNER_TEMP 'ffmpeg-portable'
+          $ffmpegZip  = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $ffmpegRoot
+          Remove-Item -Force -ErrorAction SilentlyContinue $ffmpegZip
+          New-Item -ItemType Directory -Force $ffmpegRoot | Out-Null
+
+          $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+          Write-Host "Descargando FFmpeg estatico desde $url"
+          Invoke-WebRequest -Uri $url -OutFile $ffmpegZip -UseBasicParsing
+
+          Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegRoot -Force
+
+          $ffmpegExe = Get-ChildItem -Path $ffmpegRoot -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobeExe = Get-ChildItem -Path $ffmpegRoot -Recurse -Filter ffprobe.exe | Select-Object -First 1
+
+          if (-not $ffmpegExe) { throw 'No se encontro ffmpeg.exe despues de descargar FFmpeg.' }
+          if (-not $ffprobeExe) { throw 'No se encontro ffprobe.exe despues de descargar FFmpeg.' }
+
+          $ffmpegBin = $ffmpegExe.Directory.FullName
+          $ffmpegBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "AUDITOR_IA_FFMPEG_BIN=$ffmpegBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          & $ffmpegExe.FullName -version
+          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg.exe no pudo ejecutarse.' }
+
+          & $ffprobeExe.FullName -version
+          if ($LASTEXITCODE -ne 0) { throw 'ffprobe.exe no pudo ejecutarse.' }
+
+          Write-Host "FFmpeg listo en: $ffmpegBin"
+
       - name: Build NeMo-Speech.cpp CPU ASR + SortFormer
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+
           git clone --depth 1 --recurse-submodules https://github.com/NVIDIA/NeMo-Speech.cpp.git .nemo-src
           if ($LASTEXITCODE -ne 0) { throw 'No se pudo clonar NeMo-Speech.cpp' }
+
           Push-Location .nemo-src
-          powershell -ExecutionPolicy Bypass -File scripts\windows\build.ps1 -Backend cpu -BuildDir "$env:GITHUB_WORKSPACE\.nemo-build" -Config Release -Http
-          if ($LASTEXITCODE -ne 0) { throw 'Build NeMo-Speech fallo' }
-          Pop-Location
+          try {
+            powershell -ExecutionPolicy Bypass -File scripts\windows\build.ps1 -Backend cpu -BuildDir "$env:GITHUB_WORKSPACE\.nemo-build" -Config Release -Http
+            if ($LASTEXITCODE -ne 0) { throw 'Build NeMo-Speech fallo' }
+          }
+          finally {
+            Pop-Location
+          }
+
           New-Item -ItemType Directory -Force build_assets\nemo-speech | Out-Null
           cmake --install .nemo-build --config Release --prefix "$env:GITHUB_WORKSPACE\build_assets\nemo-speech"
           if ($LASTEXITCODE -ne 0) { throw 'Install NeMo-Speech fallo' }
-          & build_assets\nemo-speech\bin\nemo-speech.exe --version
+
+          $nemoExe = 'build_assets\nemo-speech\bin\nemo-speech.exe'
+          if (-not (Test-Path $nemoExe)) { throw 'Falta nemo-speech.exe despues de compilar.' }
+
+          & $nemoExe --version
+          if ($LASTEXITCODE -ne 0) { throw 'nemo-speech.exe no pudo ejecutarse.' }
+
       - name: Convertir modelos Nemotron 3.5 y SortFormer Q8
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+
           Push-Location .nemo-src
-          python -m pip install -r requirements.txt
-          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\build_assets\models" | Out-Null
-          python convert_model.py nvidia/nemotron-3.5-asr-streaming-0.6b --outfile "$env:GITHUB_WORKSPACE\build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf" --outtype q8_0
-          if ($LASTEXITCODE -ne 0) { throw 'Conversion Nemotron 3.5 fallo' }
-          python convert_model.py nvidia/diar_streaming_sortformer_4spk-v2 --outfile "$env:GITHUB_WORKSPACE\build_assets\models\sortformer-v2-q8_0.gguf" --outtype q8_0
-          if ($LASTEXITCODE -ne 0) { throw 'Conversion SortFormer fallo' }
-          Pop-Location
+          try {
+            python -m pip install -r requirements.txt
+            if ($LASTEXITCODE -ne 0) { throw 'Fallo instalando dependencias para convertir modelos.' }
+
+            New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\build_assets\models" | Out-Null
+
+            python convert_model.py nvidia/nemotron-3.5-asr-streaming-0.6b --outfile "$env:GITHUB_WORKSPACE\build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf" --outtype q8_0
+            if ($LASTEXITCODE -ne 0) { throw 'Conversion Nemotron 3.5 fallo' }
+
+            python convert_model.py nvidia/diar_streaming_sortformer_4spk-v2 --outfile "$env:GITHUB_WORKSPACE\build_assets\models\sortformer-v2-q8_0.gguf" --outtype q8_0
+            if ($LASTEXITCODE -ne 0) { throw 'Conversion SortFormer fallo' }
+          }
+          finally {
+            Pop-Location
+          }
+
       - name: Verificar motor nativo
         shell: pwsh
         run: |
-          $n='build_assets\nemo-speech\bin\nemo-speech.exe'
+          $ErrorActionPreference = 'Stop'
+
+          $n = 'build_assets\nemo-speech\bin\nemo-speech.exe'
           if (-not (Test-Path $n)) { throw 'Falta nemo-speech.exe' }
-          foreach($m in @('build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf','build_assets\models\sortformer-v2-q8_0.gguf')) { if(-not(Test-Path $m)){throw "Falta $m"} }
+
+          foreach ($m in @(
+            'build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf',
+            'build_assets\models\sortformer-v2-q8_0.gguf'
+          )) {
+            if (-not (Test-Path $m)) { throw "Falta $m" }
+          }
+
           & $n doctor
+          if ($LASTEXITCODE -ne 0) { throw 'La verificacion doctor de NeMo-Speech fallo.' }
+
       - name: Tests Python
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           python -m unittest tests.test_nemo_parser tests.test_role_classifier tests.test_file_selector_stability tests.test_live_restored -v
           if ($LASTEXITCODE -ne 0) { throw 'Tests fallo' }
+
       - name: Construir Setup
         shell: pwsh
-        run: ./build_release.ps1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./build_release.ps1
+
+      - name: Verificar Setup final
+        shell: pwsh
+        run: |
+          $setup = 'release\AUDITOR_IA_8.0.0_Setup.exe'
+          if (-not (Test-Path $setup)) { throw 'No se genero el instalador final.' }
+          $size = (Get-Item $setup).Length
+          if ($size -lt 1MB) { throw 'El instalador final parece incompleto.' }
+          Write-Host "Setup generado correctamente: $setup ($([math]::Round($size/1MB,2)) MB)"
+
       - name: Guardar Setup
         uses: actions/upload-artifact@v4
         with:
