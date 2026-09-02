@@ -6,22 +6,33 @@ from pathlib import Path
 
 
 class AppPaths:
-    """Rutas seguras para instalación Windows por usuario."""
+    """Rutas de la aplicacion y datos de usuario.
+
+    ``root`` apunta siempre al directorio del ejecutable instalado.
+    ``bundle_root`` apunta al directorio real de recursos de PyInstaller
+    (sys._MEIPASS) cuando corresponde. Asi funciona tanto con layout plano
+    como con ``_internal``.
+    """
 
     APP_DATA_FOLDER = "AUDITOR_IA_TRANSCRIPTOR"
 
     def __init__(self) -> None:
         if getattr(sys, "frozen", False):
             self.root = Path(sys.executable).resolve().parent
+            self.bundle_root = Path(
+                getattr(sys, "_MEIPASS", self.root)
+            ).resolve()
         else:
             self.root = Path(__file__).resolve().parents[2]
+            self.bundle_root = self.root
 
-        # Activos incluidos con el instalador: solo lectura en ejecución.
-        self.models = self.root / "models"
-        self.resources = self.root / "resources"
-        self.ffmpeg = self.root / "ffmpeg"
+        # Activos incluidos con el instalador: solo lectura en ejecucion.
+        self.models = self.bundle_root / "models"
+        self.resources = self.bundle_root / "resources"
+        self.ffmpeg = self.bundle_root / "ffmpeg"
+        self.nemo_speech = self.bundle_root / "nemo-speech"
 
-        # Datos que la aplicación necesita escribir.
+        # Datos que la aplicacion necesita escribir.
         if os.name == "nt":
             base = Path(os.environ.get("LOCALAPPDATA", Path.home()))
         else:

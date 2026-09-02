@@ -5,34 +5,43 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Evita llamadas externas durante la diarización local.
-# Los modelos ya vienen incluidos en la distribución.
-os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "0")
+# Todo el procesamiento de modelos es local.
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 _DLL_HANDLES = []
 
 
+def _bundle_roots() -> list[Path]:
+    roots: list[Path] = []
+    if getattr(sys, "frozen", False):
+        roots.append(Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent)).resolve())
+        roots.append(Path(sys.executable).resolve().parent)
+    else:
+        roots.append(Path(__file__).resolve().parent)
+
+    unique: list[Path] = []
+    for root in roots:
+        if root not in unique:
+            unique.append(root)
+    return unique
+
+
 def _configure_bundled_ffmpeg() -> None:
-    """Make bundled FFmpeg Shared visible before TorchCodec/pyannote import."""
+    """Hace visible FFmpeg Shared antes de importar librerias multimedia."""
     candidates: list[Path] = []
 
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).resolve().parent
-        candidates.extend(
-            [
-                base / "ffmpeg" / "bin",
-                base / "_internal" / "ffmpeg" / "bin",
-            ]
-        )
-    else:
-        configured = os.environ.get("AUDITOR_IA_FFMPEG_BIN", "").strip()
-        if configured:
-            candidates.append(Path(configured))
+    configured = os.environ.get("AUDITOR_IA_FFMPEG_BIN", "").strip()
+    if configured:
+        candidates.append(Path(configured))
+
+    for root in _bundle_roots():
+        candidates.append(root / "ffmpeg" / "bin")
+        candidates.append(root / "ffmpeg")
 
     for folder in candidates:
-        if not folder.is_dir():
+        if not (folder / "ffmpeg.exe").is_file():
             continue
 
         os.environ["PATH"] = str(folder) + os.pathsep + os.environ.get("PATH", "")
@@ -48,67 +57,94 @@ def _configure_bundled_ffmpeg() -> None:
 _configure_bundled_ffmpeg()
 
 
+def _find_bundle_file(relative: str) -> Path:
+    for root in _bundle_roots():
+        candidate = root / relative
+        if candidate.is_file():
+            return candidate
+    return _bundle_roots()[0] / relative
+
+
 def _runtime_self_test() -> int:
+    """Prueba real del contenido que se entregara al usuario.
+
+    No usa componentes antiguos de PyTorch/pyannote/speechbrain; 8.0.0 usa
+    NeMo-Speech + SortFormer para archivos y Faster-Whisper para modo En vivo.
+    """
     try:
         import PySide6
-        from PySide6.QtWidgets import QApplication
-
         import av
         import ctranslate2
         import faster_whisper
         import numpy
-        import torch
-        import torchaudio
-        import torchcodec
-        import pyannote.audio
-        import speechbrain
-
-        from app.services.speechbrain_compat import (
-            patch_speechbrain_lazy_import,
-        )
-
-        patch_speechbrain_lazy_import()
-
         import soundcard
         import sounddevice
-        import sklearn
+        from faster_whisper import WhisperModel
 
-        line = subprocess.check_output(
-            ["ffmpeg", "-version"],
+        ffmpeg = _find_bundle_file("ffmpeg/bin/ffmpeg.exe")
+        ffprobe = _find_bundle_file("ffmpeg/bin/ffprobe.exe")
+        nemo = _find_bundle_file("nemo-speech/bin/nemo-speech.exe")
+        asr = _find_bundle_file("models/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf")
+        diar = _find_bundle_file("models/sortformer-v2-q8_0.gguf")
+        whisper_dir = _find_bundle_file("models/small/model.bin").parent
+
+        required = [
+            ffmpeg,
+            ffprobe,
+            nemo,
+            asr,
+            diar,
+            whisper_dir / "model.bin",
+            whisper_dir / "config.json",
+            whisper_dir / "tokenizer.json",
+        ]
+        missing = [str(path) for path in required if not path.is_file()]
+        if missing:
+            raise RuntimeError("Activos empaquetados incompletos: " + " | ".join(missing))
+
+        ffmpeg_line = subprocess.check_output(
+            [str(ffmpeg), "-version"],
             text=True,
             stderr=subprocess.STDOUT,
+            timeout=20,
         ).splitlines()[0]
 
-        app = QApplication.instance() or QApplication([])
-        app.quit()
+        nemo_check = subprocess.run(
+            [str(nemo), "doctor"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=60,
+        )
+        if nemo_check.returncode != 0:
+            raise RuntimeError("nemo-speech doctor fallo: " + nemo_check.stdout[-1200:])
+
+        # Comprueba que el modelo de En vivo no solo exista: debe poder abrirse
+        # totalmente offline con CTranslate2.
+        model = WhisperModel(
+            str(whisper_dir),
+            device="cpu",
+            compute_type="int8",
+            cpu_threads=2,
+            num_workers=1,
+            local_files_only=True,
+        )
+        del model
 
         details = [
-            f"FFmpeg={line}",
+            ffmpeg_line,
             f"PySide6={PySide6.__version__}",
-            f"Torch={torch.__version__}",
-            f"Torchaudio={torchaudio.__version__}",
-            "TorchCodec=OK",
-            f"Pyannote={pyannote.audio.__version__}",
             f"NumPy={numpy.__version__}",
             f"PyAV={av.__version__}",
             f"CTranslate2={ctranslate2.__version__}",
             "FasterWhisper=OK",
-            f"SpeechBrain={speechbrain.__version__}",
+            "FasterWhisperSmall=OK",
             "SoundCard=OK",
-            "sounddevice=OK",
-            f"Sklearn={sklearn.__version__}",
+            "SoundDevice=OK",
+            "NeMoSpeechDoctor=OK",
+            "NemotronGGUF=OK",
+            "SortFormerGGUF=OK",
         ]
-
-        if getattr(sys, "frozen", False):
-            base = Path(sys.executable).resolve().parent
-            required = [
-                base / "models" / "small" / "model.bin",
-                base / "models" / "pyannote-community-1" / "config.yaml",
-                base / "models" / "speechbrain-ecapa" / "embedding_model.ckpt",
-            ]
-            missing = [str(path) for path in required if not path.is_file()]
-            if missing:
-                raise RuntimeError("Modelos empaquetados incompletos: " + " | ".join(missing))
 
         Path("runtime_self_test_ok.txt").write_text("\n".join(details), encoding="utf-8")
         return 0

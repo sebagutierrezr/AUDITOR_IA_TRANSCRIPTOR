@@ -1,4 +1,5 @@
-name: Build Windows Installer 8.0
+name: Build Windows Installer 8.0 FIX DEFINITIVO
+run-name: AUDITOR IA 8.0.0 · ${{ github.ref_name }} · ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -24,7 +25,7 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Python app dependencies
+      - name: Dependencias Python
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -35,7 +36,7 @@ jobs:
           cmake --version
           ninja --version
 
-      - name: FFmpeg Shared portable
+      - name: Preparar FFmpeg Shared portable
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -43,75 +44,77 @@ jobs:
           $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full-shared.7z'
           $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg-release-full-shared.7z'
           $extract = Join-Path $env:RUNNER_TEMP 'ffmpeg-shared'
+          $target = Join-Path $env:GITHUB_WORKSPACE 'build_assets\ffmpeg\bin'
 
-          if (Test-Path $archive) { Remove-Item $archive -Force }
-          if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
+          Remove-Item -Force -ErrorAction SilentlyContinue $archive
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $extract
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Split-Path $target -Parent)
           New-Item -ItemType Directory -Force $extract | Out-Null
+          New-Item -ItemType Directory -Force $target | Out-Null
 
-          Write-Host "Descargando FFmpeg Shared desde $url"
+          Write-Host "Descargando FFmpeg Shared: $url"
           & curl.exe -L --fail --retry 4 --retry-all-errors --retry-delay 5 --connect-timeout 30 -o $archive $url
-          if ($LASTEXITCODE -ne 0) { throw 'No se pudo descargar FFmpeg Shared.' }
-          if (-not (Test-Path $archive)) { throw 'No se genero el archivo descargado de FFmpeg.' }
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $archive)) {
+            throw 'No se pudo descargar FFmpeg Shared.'
+          }
 
-          Write-Host 'Extrayendo FFmpeg Shared...'
           & 7z.exe x $archive "-o$extract" -y | Out-Host
           if ($LASTEXITCODE -ne 0) { throw 'No se pudo extraer FFmpeg Shared.' }
 
           $ffmpegExe = Get-ChildItem -Path $extract -Filter 'ffmpeg.exe' -File -Recurse | Select-Object -First 1
-          if (-not $ffmpegExe) { throw 'No se encontro ffmpeg.exe dentro del paquete descargado.' }
+          if (-not $ffmpegExe) { throw 'No se encontro ffmpeg.exe en el paquete descargado.' }
+          $sourceBin = $ffmpegExe.Directory.FullName
 
-          $bin = $ffmpegExe.Directory.FullName
-          $root = Split-Path $bin -Parent
-          $ffprobe = Join-Path $bin 'ffprobe.exe'
+          Copy-Item -Path (Join-Path $sourceBin '*') -Destination $target -Recurse -Force
 
-          if (-not (Test-Path $ffprobe)) { throw 'FFmpeg Shared incompleto: falta ffprobe.exe.' }
+          $ffmpeg = Join-Path $target 'ffmpeg.exe'
+          $ffprobe = Join-Path $target 'ffprobe.exe'
+          if (-not (Test-Path $ffmpeg)) { throw 'Falta build_assets\ffmpeg\bin\ffmpeg.exe.' }
+          if (-not (Test-Path $ffprobe)) { throw 'Falta build_assets\ffmpeg\bin\ffprobe.exe.' }
 
           foreach ($pattern in @('avcodec-*.dll','avformat-*.dll','avutil-*.dll','swresample-*.dll')) {
-            if (-not (Get-ChildItem -Path $bin -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+            if (-not (Get-ChildItem -Path $target -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
               throw "FFmpeg Shared incompleto: falta $pattern"
             }
           }
 
-          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "AUDITOR_IA_FFMPEG_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "AUDITOR_IA_FFMPEG_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "FFMPEG_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "FFMPEG_DIR=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CMAKE_PREFIX_PATH=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $target | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "AUDITOR_IA_FFMPEG_BIN=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          & (Join-Path $bin 'ffmpeg.exe') -version | Select-Object -First 1
-          & (Join-Path $bin 'ffprobe.exe') -version | Select-Object -First 1
-          Write-Host "AUDITOR_IA_FFMPEG_BIN=$bin"
+          & $ffmpeg -version | Select-Object -First 1
+          & $ffprobe -version | Select-Object -First 1
+          Write-Host "FFmpeg listo en $target"
 
       - name: Build NeMo-Speech.cpp CPU ASR + SortFormer
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          if (Test-Path '.nemo-src') { Remove-Item '.nemo-src' -Recurse -Force }
-          if (Test-Path '.nemo-build') { Remove-Item '.nemo-build' -Recurse -Force }
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '.nemo-src', '.nemo-build'
 
           git clone --depth 1 --recurse-submodules https://github.com/NVIDIA/NeMo-Speech.cpp.git .nemo-src
           if ($LASTEXITCODE -ne 0) { throw 'No se pudo clonar NeMo-Speech.cpp.' }
 
           Push-Location .nemo-src
           try {
-            powershell -ExecutionPolicy Bypass -File scripts\windows\build.ps1 -Backend cpu -BuildDir "$env:GITHUB_WORKSPACE\.nemo-build" -Config Release -Http
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\build.ps1 -Backend cpu -BuildDir "$env:GITHUB_WORKSPACE\.nemo-build" -Config Release -Http
             if ($LASTEXITCODE -ne 0) { throw 'Build NeMo-Speech fallo.' }
           }
           finally {
             Pop-Location
           }
 
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'build_assets\nemo-speech'
           New-Item -ItemType Directory -Force 'build_assets\nemo-speech' | Out-Null
           cmake --install .nemo-build --config Release --prefix "$env:GITHUB_WORKSPACE\build_assets\nemo-speech"
           if ($LASTEXITCODE -ne 0) { throw 'Install NeMo-Speech fallo.' }
 
-          $nemoExe = 'build_assets\nemo-speech\bin\nemo-speech.exe'
-          if (-not (Test-Path $nemoExe)) { throw 'La compilacion termino pero falta nemo-speech.exe.' }
-          & $nemoExe --version
+          $nemo = 'build_assets\nemo-speech\bin\nemo-speech.exe'
+          if (-not (Test-Path $nemo)) { throw 'Falta nemo-speech.exe despues de compilar.' }
+          & $nemo --version
+          if ($LASTEXITCODE -ne 0) { throw 'nemo-speech.exe no inicia correctamente.' }
 
-      - name: Convertir modelos Nemotron 3.5 y SortFormer Q8
+      - name: Convertir Nemotron 3.5 y SortFormer Q8
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -131,41 +134,81 @@ jobs:
             Pop-Location
           }
 
-      - name: Verificar motor nativo y activos
+      - name: Descargar Faster-Whisper Small para modo En vivo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          from pathlib import Path
+          import shutil
+          from huggingface_hub import snapshot_download
+
+          target = Path('build_assets/models/small').resolve()
+          if target.exists():
+              shutil.rmtree(target)
+          target.mkdir(parents=True, exist_ok=True)
+
+          snapshot_download(
+              repo_id='Systran/faster-whisper-small',
+              local_dir=str(target),
+              allow_patterns=[
+                  'model.bin',
+                  'config.json',
+                  'tokenizer.json',
+                  'vocabulary.*',
+                  'preprocessor_config.json',
+              ],
+          )
+
+          required = ('model.bin', 'config.json', 'tokenizer.json')
+          missing = [name for name in required if not (target / name).is_file()]
+          if missing:
+              raise RuntimeError('Faster-Whisper Small incompleto: ' + ', '.join(missing))
+
+          print('Faster-Whisper Small listo:', target)
+          print('model.bin MB:', round((target / 'model.bin').stat().st_size / 1024 / 1024, 1))
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'Descarga de Faster-Whisper Small fallo.' }
+
+      - name: Verificar todos los activos antes de empaquetar
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $nemo = 'build_assets\nemo-speech\bin\nemo-speech.exe'
-          $models = @(
+          $required = @(
+            'build_assets\ffmpeg\bin\ffmpeg.exe',
+            'build_assets\ffmpeg\bin\ffprobe.exe',
+            'build_assets\nemo-speech\bin\nemo-speech.exe',
             'build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf',
-            'build_assets\models\sortformer-v2-q8_0.gguf'
+            'build_assets\models\sortformer-v2-q8_0.gguf',
+            'build_assets\models\small\model.bin',
+            'build_assets\models\small\config.json',
+            'build_assets\models\small\tokenizer.json'
           )
 
-          if (-not (Test-Path $nemo)) { throw 'Falta nemo-speech.exe.' }
-          foreach ($model in $models) {
-            if (-not (Test-Path $model)) { throw "Falta $model" }
-            $size = (Get-Item $model).Length
-            if ($size -lt 1048576) { throw "El modelo parece incompleto: $model ($size bytes)" }
+          foreach ($item in $required) {
+            if (-not (Test-Path $item)) { throw "Falta activo requerido: $item" }
+            if ((Get-Item $item).Length -le 0) { throw "Activo vacio: $item" }
           }
 
-          if (-not $env:AUDITOR_IA_FFMPEG_BIN) { throw 'AUDITOR_IA_FFMPEG_BIN no esta definido.' }
-          & (Join-Path $env:AUDITOR_IA_FFMPEG_BIN 'ffmpeg.exe') -version | Select-Object -First 1
-          & $nemo doctor
+          & 'build_assets\nemo-speech\bin\nemo-speech.exe' doctor
           if ($LASTEXITCODE -ne 0) { throw 'nemo-speech doctor fallo.' }
+
+          & 'build_assets\ffmpeg\bin\ffmpeg.exe' -version | Select-Object -First 1
 
       - name: Tests Python
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python -m unittest tests.test_nemo_parser tests.test_role_classifier tests.test_file_selector_stability tests.test_live_restored -v
+          python -m unittest tests.test_nemo_parser tests.test_role_classifier tests.test_file_selector_stability tests.test_live_restored tests.test_build_script_import_path -v
           if ($LASTEXITCODE -ne 0) { throw 'Tests Python fallaron.' }
 
-      - name: Construir Setup
+      - name: Construir y validar Setup
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          ./build_release.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'build_release.ps1 fallo.' }
 
       - name: Verificar Setup final
         shell: pwsh

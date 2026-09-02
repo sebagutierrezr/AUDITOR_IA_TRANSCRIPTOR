@@ -1,61 +1,47 @@
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-Write-Host '=== AUDITOR IA 8.0.0 - BUILD RELEASE ==='
+Write-Host '=== AUDITOR IA 8.0.0 - BUILD RELEASE DEFINITIVO ==='
 
-# No borrar build_assets: contiene NeMo-Speech y los modelos creados por el workflow.
+# build_assets se conserva: fue generado y validado por el workflow.
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue build, dist, release
+Remove-Item -Force -ErrorAction SilentlyContinue runtime_self_test_ok.txt, runtime_self_test_error.txt
 
 # -----------------------------------------------------------------------------
-# 1) Validar activos nativos antes de empaquetar
+# 1) Validar TODO lo que debe terminar dentro del instalador
 # -----------------------------------------------------------------------------
-$nemoExe = Join-Path $PSScriptRoot 'build_assets\nemo-speech\bin\nemo-speech.exe'
-$asrModel = Join-Path $PSScriptRoot 'build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf'
-$diarModel = Join-Path $PSScriptRoot 'build_assets\models\sortformer-v2-q8_0.gguf'
+$assetRoot = Join-Path $PSScriptRoot 'build_assets'
+$requiredAssets = @(
+    (Join-Path $assetRoot 'ffmpeg\bin\ffmpeg.exe'),
+    (Join-Path $assetRoot 'ffmpeg\bin\ffprobe.exe'),
+    (Join-Path $assetRoot 'nemo-speech\bin\nemo-speech.exe'),
+    (Join-Path $assetRoot 'models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf'),
+    (Join-Path $assetRoot 'models\sortformer-v2-q8_0.gguf'),
+    (Join-Path $assetRoot 'models\small\model.bin'),
+    (Join-Path $assetRoot 'models\small\config.json'),
+    (Join-Path $assetRoot 'models\small\tokenizer.json')
+)
 
-foreach ($required in @($nemoExe, $asrModel, $diarModel)) {
-    if (-not (Test-Path $required)) {
-        throw "Falta activo requerido para el instalador: $required"
+foreach ($required in $requiredAssets) {
+    if (-not (Test-Path $required -PathType Leaf)) {
+        throw "Falta activo requerido ANTES de PyInstaller: $required"
+    }
+    if ((Get-Item $required).Length -le 0) {
+        throw "Activo vacio ANTES de PyInstaller: $required"
     }
 }
-
-# -----------------------------------------------------------------------------
-# 2) Copiar FFmpeg Shared ANTES de ejecutar PyInstaller.
-#    AUDITOR_IA.spec incluye build_assets/ffmpeg dentro del programa.
-#    main.py espera encontrarlo en ffmpeg/bin.
-# -----------------------------------------------------------------------------
-$ffmpegBin = $env:AUDITOR_IA_FFMPEG_BIN
-if ([string]::IsNullOrWhiteSpace($ffmpegBin)) {
-    throw 'AUDITOR_IA_FFMPEG_BIN no esta definido. El workflow debe preparar FFmpeg primero.'
-}
-
-$ffmpegBin = (Resolve-Path $ffmpegBin).Path
-$ffmpegExe = Join-Path $ffmpegBin 'ffmpeg.exe'
-$ffprobeExe = Join-Path $ffmpegBin 'ffprobe.exe'
-
-if (-not (Test-Path $ffmpegExe)) { throw "Falta ffmpeg.exe en $ffmpegBin" }
-if (-not (Test-Path $ffprobeExe)) { throw "Falta ffprobe.exe en $ffmpegBin" }
 
 foreach ($pattern in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll', 'swresample-*.dll')) {
+    $ffmpegBin = Join-Path $assetRoot 'ffmpeg\bin'
     if (-not (Get-ChildItem -Path $ffmpegBin -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
-        throw "FFmpeg Shared incompleto. Falta $pattern en $ffmpegBin"
+        throw "FFmpeg Shared incompleto antes de empaquetar. Falta $pattern en $ffmpegBin"
     }
 }
 
-$ffmpegTarget = Join-Path $PSScriptRoot 'build_assets\ffmpeg\bin'
-Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $PSScriptRoot 'build_assets\ffmpeg')
-New-Item -ItemType Directory -Force $ffmpegTarget | Out-Null
-Copy-Item -Path (Join-Path $ffmpegBin '*') -Destination $ffmpegTarget -Recurse -Force
-
-if (-not (Test-Path (Join-Path $ffmpegTarget 'ffmpeg.exe'))) {
-    throw 'FFmpeg no quedo copiado dentro de build_assets\ffmpeg\bin.'
-}
-
-Write-Host "FFmpeg empaquetable: $ffmpegTarget"
-& (Join-Path $ffmpegTarget 'ffmpeg.exe') -version | Select-Object -First 1
+Write-Host 'Activos previos OK.'
 
 # -----------------------------------------------------------------------------
-# 3) PyInstaller
+# 2) PyInstaller
 # -----------------------------------------------------------------------------
 Write-Host 'Ejecutando PyInstaller...'
 python -m PyInstaller --noconfirm --clean AUDITOR_IA.spec
@@ -63,36 +49,108 @@ if ($LASTEXITCODE -ne 0) { throw 'PyInstaller fallo.' }
 
 $distRoot = Join-Path $PSScriptRoot 'dist\AUDITOR_IA_8.0.0_BUILD'
 $appExe = Join-Path $distRoot 'AUDITOR_IA.exe'
-$bundledFfmpeg = Join-Path $distRoot 'ffmpeg\bin\ffmpeg.exe'
-$bundledFfprobe = Join-Path $distRoot 'ffmpeg\bin\ffprobe.exe'
-$bundledNemo = Join-Path $distRoot 'nemo-speech\bin\nemo-speech.exe'
-$bundledAsr = Join-Path $distRoot 'models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf'
-$bundledDiar = Join-Path $distRoot 'models\sortformer-v2-q8_0.gguf'
 
-foreach ($required in @($appExe, $bundledFfmpeg, $bundledFfprobe, $bundledNemo, $bundledAsr, $bundledDiar)) {
-    if (-not (Test-Path $required)) {
-        throw "PyInstaller termino, pero falta dentro de dist: $required"
+if (-not (Test-Path $appExe -PathType Leaf)) {
+    throw "PyInstaller termino pero no genero: $appExe"
+}
+
+# PyInstaller 6 puede usar layout plano o _internal. El spec nuevo fuerza
+# layout plano, pero esta deteccion evita volver a romper el build si cambia.
+$bundleCandidates = @(
+    $distRoot,
+    (Join-Path $distRoot '_internal')
+)
+
+$bundleRoot = $null
+foreach ($candidate in $bundleCandidates) {
+    $probe = Join-Path $candidate 'ffmpeg\bin\ffmpeg.exe'
+    if (Test-Path $probe -PathType Leaf) {
+        $bundleRoot = $candidate
+        break
     }
 }
 
-Write-Host 'PyInstaller OK. FFmpeg, NeMo-Speech y modelos quedaron dentro de dist.'
+if (-not $bundleRoot) {
+    Write-Host 'Contenido de dist (primeros 150 archivos):'
+    Get-ChildItem -Path $distRoot -Recurse -File -ErrorAction SilentlyContinue |
+        Select-Object -First 150 -ExpandProperty FullName |
+        ForEach-Object { Write-Host $_ }
+    throw 'PyInstaller genero el EXE pero no se encontro la raiz de activos empaquetados.'
+}
+
+Write-Host "Raiz de activos empaquetados detectada: $bundleRoot"
+
+$requiredBundled = @(
+    (Join-Path $bundleRoot 'ffmpeg\bin\ffmpeg.exe'),
+    (Join-Path $bundleRoot 'ffmpeg\bin\ffprobe.exe'),
+    (Join-Path $bundleRoot 'nemo-speech\bin\nemo-speech.exe'),
+    (Join-Path $bundleRoot 'models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf'),
+    (Join-Path $bundleRoot 'models\sortformer-v2-q8_0.gguf'),
+    (Join-Path $bundleRoot 'models\small\model.bin'),
+    (Join-Path $bundleRoot 'models\small\config.json'),
+    (Join-Path $bundleRoot 'models\small\tokenizer.json'),
+    (Join-Path $bundleRoot 'resources\logo.svg')
+)
+
+foreach ($required in $requiredBundled) {
+    if (-not (Test-Path $required -PathType Leaf)) {
+        throw "PyInstaller termino pero falta dentro de dist: $required"
+    }
+}
+
+Write-Host 'PyInstaller OK: FFmpeg + NeMo + Nemotron + SortFormer + Faster-Whisper + recursos presentes.'
+
+# -----------------------------------------------------------------------------
+# 3) Autoprueba REAL del EXE empaquetado
+# -----------------------------------------------------------------------------
+Write-Host 'Ejecutando autoprueba del EXE empaquetado...'
+$oldSelfTest = $env:AUDITOR_IA_SELF_TEST
+$env:AUDITOR_IA_SELF_TEST = '1'
+try {
+    $process = Start-Process -FilePath $appExe -WorkingDirectory $PSScriptRoot -PassThru -Wait
+    if ($process.ExitCode -ne 0) {
+        $detail = ''
+        $errorFile = Join-Path $PSScriptRoot 'runtime_self_test_error.txt'
+        if (Test-Path $errorFile) {
+            $detail = Get-Content $errorFile -Raw
+        }
+        throw "Autoprueba del EXE fallo con codigo $($process.ExitCode). $detail"
+    }
+}
+finally {
+    if ($null -eq $oldSelfTest) {
+        Remove-Item Env:AUDITOR_IA_SELF_TEST -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AUDITOR_IA_SELF_TEST = $oldSelfTest
+    }
+}
+
+$okFile = Join-Path $PSScriptRoot 'runtime_self_test_ok.txt'
+if (-not (Test-Path $okFile)) {
+    throw 'El EXE devolvio codigo 0 pero no genero runtime_self_test_ok.txt.'
+}
+Write-Host (Get-Content $okFile -Raw)
+Write-Host 'Autoprueba del EXE: OK.'
 
 # -----------------------------------------------------------------------------
 # 4) Inno Setup
 # -----------------------------------------------------------------------------
 New-Item -ItemType Directory -Force release | Out-Null
 
-$isccCandidates = @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
-    (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
-) | Where-Object { $_ -and (Test-Path $_) }
+$isccCandidates = @()
+if (${env:ProgramFiles(x86)}) {
+    $isccCandidates += (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe')
+}
+if ($env:ProgramFiles) {
+    $isccCandidates += (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+}
 
-$iscc = $isccCandidates | Select-Object -First 1
+$iscc = $isccCandidates | Where-Object { Test-Path $_ -PathType Leaf } | Select-Object -First 1
 if (-not $iscc) {
     $cmd = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
     if ($cmd) { $iscc = $cmd.Source }
 }
-
 if (-not $iscc) {
     throw 'No se encontro ISCC.exe de Inno Setup 6 en el runner.'
 }
@@ -102,7 +160,7 @@ Write-Host "Inno Setup: $iscc"
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup fallo.' }
 
 $setup = Join-Path $PSScriptRoot 'release\AUDITOR_IA_8.0.0_Setup.exe'
-if (-not (Test-Path $setup)) {
+if (-not (Test-Path $setup -PathType Leaf)) {
     throw 'Inno Setup termino sin generar release\AUDITOR_IA_8.0.0_Setup.exe.'
 }
 
