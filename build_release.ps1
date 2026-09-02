@@ -3,95 +3,112 @@ Set-Location $PSScriptRoot
 
 Write-Host '=== AUDITOR IA 8.0.0 - BUILD RELEASE ==='
 
+# No borrar build_assets: contiene NeMo-Speech y los modelos creados por el workflow.
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue build, dist, release
 
-if (-not (Test-Path 'build_assets\nemo-speech\bin\nemo-speech.exe')) {
-    throw 'Falta build_assets\nemo-speech\bin\nemo-speech.exe'
-}
+# -----------------------------------------------------------------------------
+# 1) Validar activos nativos antes de empaquetar
+# -----------------------------------------------------------------------------
+$nemoExe = Join-Path $PSScriptRoot 'build_assets\nemo-speech\bin\nemo-speech.exe'
+$asrModel = Join-Path $PSScriptRoot 'build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf'
+$diarModel = Join-Path $PSScriptRoot 'build_assets\models\sortformer-v2-q8_0.gguf'
 
-foreach ($model in @(
-    'build_assets\models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf',
-    'build_assets\models\sortformer-v2-q8_0.gguf'
-)) {
-    if (-not (Test-Path $model)) {
-        throw "Falta modelo requerido: $model"
+foreach ($required in @($nemoExe, $asrModel, $diarModel)) {
+    if (-not (Test-Path $required)) {
+        throw "Falta activo requerido para el instalador: $required"
     }
 }
 
+# -----------------------------------------------------------------------------
+# 2) Copiar FFmpeg Shared ANTES de ejecutar PyInstaller.
+#    AUDITOR_IA.spec incluye build_assets/ffmpeg dentro del programa.
+#    main.py espera encontrarlo en ffmpeg/bin.
+# -----------------------------------------------------------------------------
 $ffmpegBin = $env:AUDITOR_IA_FFMPEG_BIN
 if ([string]::IsNullOrWhiteSpace($ffmpegBin)) {
-    $ffmpegCommand = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
-    if ($ffmpegCommand) {
-        $ffmpegBin = Split-Path $ffmpegCommand.Source
-    }
+    throw 'AUDITOR_IA_FFMPEG_BIN no esta definido. El workflow debe preparar FFmpeg primero.'
 }
 
-if ([string]::IsNullOrWhiteSpace($ffmpegBin) -or -not (Test-Path $ffmpegBin)) {
-    throw 'FFmpeg no esta disponible para empaquetar.'
-}
-
+$ffmpegBin = (Resolve-Path $ffmpegBin).Path
 $ffmpegExe = Join-Path $ffmpegBin 'ffmpeg.exe'
 $ffprobeExe = Join-Path $ffmpegBin 'ffprobe.exe'
 
-if (-not (Test-Path $ffmpegExe)) {
-    throw "Falta ffmpeg.exe en $ffmpegBin"
-}
-if (-not (Test-Path $ffprobeExe)) {
-    throw "Falta ffprobe.exe en $ffmpegBin"
-}
+if (-not (Test-Path $ffmpegExe)) { throw "Falta ffmpeg.exe en $ffmpegBin" }
+if (-not (Test-Path $ffprobeExe)) { throw "Falta ffprobe.exe en $ffmpegBin" }
 
-Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'build_assets\ffmpeg'
-New-Item -ItemType Directory -Force 'build_assets\ffmpeg' | Out-Null
-Copy-Item $ffmpegExe 'build_assets\ffmpeg\ffmpeg.exe' -Force
-Copy-Item $ffprobeExe 'build_assets\ffmpeg\ffprobe.exe' -Force
-
-& 'build_assets\ffmpeg\ffmpeg.exe' -version
-if ($LASTEXITCODE -ne 0) {
-    throw 'El ffmpeg.exe empaquetado no pudo ejecutarse.'
+foreach ($pattern in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll', 'swresample-*.dll')) {
+    if (-not (Get-ChildItem -Path $ffmpegBin -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        throw "FFmpeg Shared incompleto. Falta $pattern en $ffmpegBin"
+    }
 }
 
-& 'build_assets\ffmpeg\ffprobe.exe' -version
-if ($LASTEXITCODE -ne 0) {
-    throw 'El ffprobe.exe empaquetado no pudo ejecutarse.'
+$ffmpegTarget = Join-Path $PSScriptRoot 'build_assets\ffmpeg\bin'
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $PSScriptRoot 'build_assets\ffmpeg')
+New-Item -ItemType Directory -Force $ffmpegTarget | Out-Null
+Copy-Item -Path (Join-Path $ffmpegBin '*') -Destination $ffmpegTarget -Recurse -Force
+
+if (-not (Test-Path (Join-Path $ffmpegTarget 'ffmpeg.exe'))) {
+    throw 'FFmpeg no quedo copiado dentro de build_assets\ffmpeg\bin.'
 }
 
+Write-Host "FFmpeg empaquetable: $ffmpegTarget"
+& (Join-Path $ffmpegTarget 'ffmpeg.exe') -version | Select-Object -First 1
+
+# -----------------------------------------------------------------------------
+# 3) PyInstaller
+# -----------------------------------------------------------------------------
 Write-Host 'Ejecutando PyInstaller...'
 python -m PyInstaller --noconfirm --clean AUDITOR_IA.spec
-if ($LASTEXITCODE -ne 0) {
-    throw 'PyInstaller fallo.'
+if ($LASTEXITCODE -ne 0) { throw 'PyInstaller fallo.' }
+
+$distRoot = Join-Path $PSScriptRoot 'dist\AUDITOR_IA_8.0.0_BUILD'
+$appExe = Join-Path $distRoot 'AUDITOR_IA.exe'
+$bundledFfmpeg = Join-Path $distRoot 'ffmpeg\bin\ffmpeg.exe'
+$bundledFfprobe = Join-Path $distRoot 'ffmpeg\bin\ffprobe.exe'
+$bundledNemo = Join-Path $distRoot 'nemo-speech\bin\nemo-speech.exe'
+$bundledAsr = Join-Path $distRoot 'models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf'
+$bundledDiar = Join-Path $distRoot 'models\sortformer-v2-q8_0.gguf'
+
+foreach ($required in @($appExe, $bundledFfmpeg, $bundledFfprobe, $bundledNemo, $bundledAsr, $bundledDiar)) {
+    if (-not (Test-Path $required)) {
+        throw "PyInstaller termino, pero falta dentro de dist: $required"
+    }
 }
 
-$distExe = 'dist\AUDITOR_IA_8.0.0_BUILD\AUDITOR_IA.exe'
-if (-not (Test-Path $distExe)) {
-    throw "PyInstaller termino pero falta $distExe"
-}
+Write-Host 'PyInstaller OK. FFmpeg, NeMo-Speech y modelos quedaron dentro de dist.'
 
-$distFfmpeg = 'dist\AUDITOR_IA_8.0.0_BUILD\ffmpeg\ffmpeg.exe'
-$distFfprobe = 'dist\AUDITOR_IA_8.0.0_BUILD\ffmpeg\ffprobe.exe'
-if (-not (Test-Path $distFfmpeg)) {
-    throw 'El build final no contiene ffmpeg.exe.'
-}
-if (-not (Test-Path $distFfprobe)) {
-    throw 'El build final no contiene ffprobe.exe.'
-}
-
+# -----------------------------------------------------------------------------
+# 4) Inno Setup
+# -----------------------------------------------------------------------------
 New-Item -ItemType Directory -Force release | Out-Null
 
-$iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-if (-not (Test-Path $iscc)) {
-    throw "No se encontro Inno Setup en $iscc"
+$isccCandidates = @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+    (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+) | Where-Object { $_ -and (Test-Path $_) }
+
+$iscc = $isccCandidates | Select-Object -First 1
+if (-not $iscc) {
+    $cmd = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
+    if ($cmd) { $iscc = $cmd.Source }
 }
 
-Write-Host 'Creando instalador...'
+if (-not $iscc) {
+    throw 'No se encontro ISCC.exe de Inno Setup 6 en el runner.'
+}
+
+Write-Host "Inno Setup: $iscc"
 & $iscc 'installer\AUDITOR_IA.iss'
-if ($LASTEXITCODE -ne 0) {
-    throw 'Inno Setup fallo.'
-}
+if ($LASTEXITCODE -ne 0) { throw 'Inno Setup fallo.' }
 
-$setup = 'release\AUDITOR_IA_8.0.0_Setup.exe'
+$setup = Join-Path $PSScriptRoot 'release\AUDITOR_IA_8.0.0_Setup.exe'
 if (-not (Test-Path $setup)) {
-    throw 'No se genero release\AUDITOR_IA_8.0.0_Setup.exe'
+    throw 'Inno Setup termino sin generar release\AUDITOR_IA_8.0.0_Setup.exe.'
 }
 
-Write-Host '=== BUILD FINALIZADO CORRECTAMENTE ==='
-Write-Host $setup
+$setupSize = (Get-Item $setup).Length
+if ($setupSize -lt 1MB) {
+    throw "El Setup generado parece invalido: $setupSize bytes."
+}
+
+Write-Host "=== BUILD COMPLETADO: $setup ($([math]::Round($setupSize / 1MB, 2)) MB) ==="
