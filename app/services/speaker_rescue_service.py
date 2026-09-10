@@ -194,18 +194,84 @@ class SpeakerRescueService:
         return vector / norm
 
     @staticmethod
-    def _cluster_two(matrix: np.ndarray):
-        from sklearn.cluster import AgglomerativeClustering
+    def _cluster_two(matrix: np.ndarray) -> np.ndarray:
+        """Separa embeddings en dos grupos sin depender de scikit-learn.
 
-        if matrix.shape[0] == 2:
+        Los embeddings ECAPA ya se normalizan antes de llegar aqui. Aun asi
+        normalizamos de forma defensiva y usamos un k-means esferico de dos
+        centros (similitud coseno). Esto evita instalar ``scikit-learn`` solo
+        para esta operacion y mantiene el runtime coherente con el .spec, que
+        deliberadamente no empaqueta esa libreria pesada.
+        """
+        values = np.asarray(matrix, dtype=np.float32)
+        if values.ndim != 2 or values.shape[0] < 2:
+            raise ValueError("SE REQUIEREN AL MENOS DOS EMBEDDINGS DE VOZ.")
+        if values.shape[1] < 1:
+            raise ValueError("LOS EMBEDDINGS DE VOZ ESTAN VACIOS.")
+        if not np.isfinite(values).all():
+            raise ValueError("LOS EMBEDDINGS DE VOZ CONTIENEN VALORES INVALIDOS.")
+
+        count = values.shape[0]
+        if count == 2:
             return np.array([0, 1], dtype=np.int32)
 
-        model = AgglomerativeClustering(
-            n_clusters=2,
-            metric="cosine",
-            linkage="average",
-        )
-        return model.fit_predict(matrix)
+        norms = np.linalg.norm(values, axis=1, keepdims=True)
+        safe = np.where(norms > 1e-8, norms, 1.0)
+        unit = values / safe
+
+        # Semillas deterministas: las dos huellas con menor similitud coseno.
+        similarity = unit @ unit.T
+        np.fill_diagonal(similarity, np.inf)
+        flat_index = int(np.argmin(similarity))
+        seed_a, seed_b = np.unravel_index(flat_index, similarity.shape)
+        if seed_a == seed_b:
+            seed_a, seed_b = 0, count - 1
+
+        centers = np.vstack((unit[seed_a], unit[seed_b])).astype(np.float32)
+        labels = np.full(count, -1, dtype=np.int32)
+
+        for _ in range(50):
+            scores = unit @ centers.T
+            updated = np.argmax(scores, axis=1).astype(np.int32)
+
+            # Nunca permitir un cluster vacio. Si ocurre, se mueve al segundo
+            # grupo la muestra mas ambigua del grupo dominante.
+            for cluster_id in (0, 1):
+                if np.any(updated == cluster_id):
+                    continue
+                other = 1 - cluster_id
+                members = np.where(updated == other)[0]
+                if members.size <= 1:
+                    continue
+                margins = np.abs(scores[members, 0] - scores[members, 1])
+                moved = int(members[int(np.argmin(margins))])
+                updated[moved] = cluster_id
+
+            if np.array_equal(updated, labels):
+                break
+            labels = updated
+
+            new_centers = []
+            for cluster_id in (0, 1):
+                members = unit[labels == cluster_id]
+                if members.size == 0:
+                    new_centers.append(centers[cluster_id])
+                    continue
+                center = members.mean(axis=0)
+                norm = float(np.linalg.norm(center))
+                if norm > 1e-8:
+                    center = center / norm
+                new_centers.append(center)
+            centers = np.vstack(new_centers).astype(np.float32)
+
+        if len(set(int(v) for v in labels.tolist())) != 2:
+            raise RuntimeError("NO FUE POSIBLE FORMAR DOS GRUPOS DE VOZ.")
+
+        # Canoniza los IDs segun primera aparicion para resultados reproducibles.
+        first_label = int(labels[0])
+        if first_label != 0:
+            labels = (1 - labels).astype(np.int32)
+        return labels
 
     @staticmethod
     def _candidate_chunks(conversation: Conversation) -> list[tuple[float, float]]:

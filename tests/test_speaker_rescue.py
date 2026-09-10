@@ -15,6 +15,29 @@ class SpeakerRescueTests(unittest.TestCase):
         labels = SpeakerRescueService._cluster_two(matrix)
         self.assertEqual(len(set(labels.tolist())), 2)
 
+    def test_two_clear_voice_groups_cluster_without_sklearn(self):
+        matrix = np.array(
+            [
+                [1.0, 0.02, 0.0],
+                [0.98, 0.05, 0.0],
+                [0.96, -0.03, 0.02],
+                [0.02, 1.0, 0.0],
+                [-0.04, 0.97, 0.01],
+                [0.03, 0.95, -0.02],
+            ],
+            dtype=np.float32,
+        )
+        labels = SpeakerRescueService._cluster_two(matrix)
+        self.assertEqual(len(set(labels.tolist())), 2)
+        self.assertEqual(len(set(labels[:3].tolist())), 1)
+        self.assertEqual(len(set(labels[3:].tolist())), 1)
+        self.assertNotEqual(int(labels[0]), int(labels[3]))
+
+    def test_cluster_two_has_no_sklearn_runtime_dependency(self):
+        import inspect
+        source = inspect.getsource(SpeakerRescueService._cluster_two)
+        self.assertNotIn("sklearn", source)
+
     def test_candidate_chunks_keep_short_client_answer(self):
         conversation = Conversation(
             source_path="x.wav",
