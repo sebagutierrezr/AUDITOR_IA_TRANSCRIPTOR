@@ -68,8 +68,8 @@ def _find_bundle_file(relative: str) -> Path:
 def _runtime_self_test() -> int:
     """Prueba real del contenido que se entregara al usuario.
 
-    No usa componentes antiguos de PyTorch/pyannote/speechbrain; 8.0.0 usa
-    NeMo-Speech + SortFormer para archivos y Faster-Whisper para modo En vivo.
+    AUDITOR IA 8.0.1 usa Faster-Whisper Small para ASR y SortFormer solo
+    para diarización de archivos. El modo En vivo usa Faster-Whisper y WASAPI.
     """
     try:
         import PySide6
@@ -77,14 +77,13 @@ def _runtime_self_test() -> int:
         import ctranslate2
         import faster_whisper
         import numpy
-        import soundcard
         import sounddevice
+        import pyaudiowpatch
         from faster_whisper import WhisperModel
 
         ffmpeg = _find_bundle_file("ffmpeg/bin/ffmpeg.exe")
         ffprobe = _find_bundle_file("ffmpeg/bin/ffprobe.exe")
         nemo = _find_bundle_file("nemo-speech/bin/nemo-speech.exe")
-        asr = _find_bundle_file("models/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf")
         diar = _find_bundle_file("models/sortformer-v2-q8_0.gguf")
         whisper_dir = _find_bundle_file("models/small/model.bin").parent
 
@@ -92,7 +91,6 @@ def _runtime_self_test() -> int:
             ffmpeg,
             ffprobe,
             nemo,
-            asr,
             diar,
             whisper_dir / "model.bin",
             whisper_dir / "config.json",
@@ -139,10 +137,9 @@ def _runtime_self_test() -> int:
             f"CTranslate2={ctranslate2.__version__}",
             "FasterWhisper=OK",
             "FasterWhisperSmall=OK",
-            "SoundCard=OK",
             "SoundDevice=OK",
+            "PyAudioWPatch=OK",
             "NeMoSpeechDoctor=OK",
-            "NemotronGGUF=OK",
             "SortFormerGGUF=OK",
         ]
 
@@ -164,7 +161,6 @@ if os.environ.get("AUDITOR_IA_SELF_TEST") == "1":
 
 def _run_file_worker_mode() -> int | None:
     if "--file-worker-smoke" in sys.argv:
-        print("AUDITOR_FILE_WORKER_SMOKE_OK", flush=True)
         return 0
 
     if "--file-worker" not in sys.argv:

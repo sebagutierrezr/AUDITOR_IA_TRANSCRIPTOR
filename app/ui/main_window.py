@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         brand.setObjectName("BrandTitle")
 
         version = QLabel(
-            "TRANSCRIPTOR · 8.0.0"
+            "TRANSCRIPTOR · 8.0.1"
         )
         version.setObjectName("BrandVersion")
 

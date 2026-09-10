@@ -64,22 +64,46 @@ class AudioTestWorker(QObject):
                 peak = float(np.max(np.abs(audio))) if audio.size else 0.0
                 maximum = max(maximum, peak)
                 self.level_changed.emit(max(0, min(100, int(peak / 0.035 * 100))))
-        if maximum < 0.001:
-            self.completed.emit("Micrófono disponible, pero no se detectó voz durante la prueba.")
-        else:
-            self.completed.emit("Micrófono listo para transcribir.")
+        self.completed.emit(
+            "Micrófono disponible, pero no se detectó voz durante la prueba."
+            if maximum < 0.001
+            else "Micrófono listo para transcribir."
+        )
 
     def test_client(self) -> None:
-        loopback = AudioDeviceService.get_loopback(self.output_id, self.output_name)
+        try:
+            import pyaudiowpatch as pyaudio
+        except Exception as exc:
+            raise RuntimeError("No se pudo cargar WASAPI loopback.") from exc
+
+        index = AudioDeviceService.loopback_index(self.output_id)
         maximum = 0.0
         started = time.monotonic()
-        with loopback.recorder(samplerate=48000, channels=1, blocksize=3840) as recorder:
-            while time.monotonic() - started < 3.0:
-                audio = np.asarray(recorder.record(numframes=3840), dtype=np.float32).reshape(-1)
-                peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-                maximum = max(maximum, peak)
-                self.level_changed.emit(max(0, min(100, int(peak / 0.20 * 100))))
-        if maximum < 0.002:
-            self.completed.emit("Salida disponible, pero no se reprodujo audio durante la prueba.")
-        else:
-            self.completed.emit("Audio del cliente listo para transcribir.")
+
+        with pyaudio.PyAudio() as manager:
+            info = manager.get_device_info_by_index(index)
+            rate = int(float(info.get("defaultSampleRate", 48000)))
+            channels = max(1, min(2, int(info.get("maxInputChannels", 2) or 2)))
+            block = max(1024, int(rate * 0.08))
+            with manager.open(
+                format=pyaudio.paInt16,
+                channels=channels,
+                rate=rate,
+                input=True,
+                input_device_index=index,
+                frames_per_buffer=block,
+            ) as stream:
+                while time.monotonic() - started < 3.0:
+                    raw = stream.read(block, exception_on_overflow=False)
+                    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                    if channels > 1 and samples.size >= channels:
+                        samples = samples[: samples.size - (samples.size % channels)].reshape(-1, channels).mean(axis=1)
+                    peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+                    maximum = max(maximum, peak)
+                    self.level_changed.emit(max(0, min(100, int(peak / 0.20 * 100))))
+
+        self.completed.emit(
+            "Salida disponible, pero no se reprodujo audio durante la prueba."
+            if maximum < 0.002
+            else "Audio del cliente listo para transcribir."
+        )

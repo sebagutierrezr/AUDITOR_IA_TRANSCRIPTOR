@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
 
 from app.models.settings import AppSettings
 from app.services.config_service import ConfigService
-from app.services.diarization_service import DiarizationService
-from app.services.speaker_rescue_service import SpeakerRescueService
+from app.engines.faster_whisper_engine import FasterWhisperEngine
+from app.services.nemo_diarization_service import NemoDiarizationService
 
 
 class SettingsPage(QFrame):
@@ -45,8 +45,8 @@ class SettingsPage(QFrame):
         info_title.setObjectName("SectionTitle")
         info_text = QLabel(
             "Transcripción: Faster-Whisper Small\n"
-            "Hablantes: Community-1 + ECAPA Rescue\n"
-            "Funcionamiento: local, sin API y sin pagos por uso."
+            "Hablantes en archivos: NVIDIA SortFormer v2\n"
+            "En vivo: micrófono + WASAPI loopback, todo local."
         )
         info_text.setObjectName("Muted")
         self._model_status = QLabel()
@@ -96,11 +96,11 @@ class SettingsPage(QFrame):
         self._refresh_status()
 
     def _refresh_status(self) -> None:
-        community = DiarizationService().is_ready()
-        rescue = SpeakerRescueService().is_ready()
+        whisper = FasterWhisperEngine("ALTA").is_ready()
+        sortformer = NemoDiarizationService().is_ready()
         self._model_status.setText(
-            "Community-1: " + ("LISTO" if community else "FALTA")
-            + "  ·  ECAPA: " + ("LISTO" if rescue else "FALTA")
+            "Faster-Whisper Small: " + ("LISTO" if whisper else "FALTA")
+            + "  ·  SortFormer: " + ("LISTO" if sortformer else "FALTA")
         )
 
     def _save(self) -> None:

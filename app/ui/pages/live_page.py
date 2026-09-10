@@ -587,7 +587,7 @@ class LivePage(QFrame):
             return
 
         settings = self.config.load()
-        recordings = self.paths.root / "recordings"
+        recordings = self.paths.recordings
         recordings.mkdir(parents=True, exist_ok=True)
         self.recording_path = recordings / (
             "LLAMADA_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".wav"

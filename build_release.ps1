@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-Write-Host '=== AUDITOR IA 8.0.0 - BUILD RELEASE DEFINITIVO ==='
+Write-Host '=== AUDITOR IA 8.0.1 - BUILD RELEASE ESTABLE ==='
 
 # build_assets se conserva: fue generado y validado por el workflow.
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue build, dist, release
@@ -15,7 +15,6 @@ $requiredAssets = @(
     (Join-Path $assetRoot 'ffmpeg\bin\ffmpeg.exe'),
     (Join-Path $assetRoot 'ffmpeg\bin\ffprobe.exe'),
     (Join-Path $assetRoot 'nemo-speech\bin\nemo-speech.exe'),
-    (Join-Path $assetRoot 'models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf'),
     (Join-Path $assetRoot 'models\sortformer-v2-q8_0.gguf'),
     (Join-Path $assetRoot 'models\small\model.bin'),
     (Join-Path $assetRoot 'models\small\config.json'),
@@ -47,7 +46,7 @@ Write-Host 'Ejecutando PyInstaller...'
 python -m PyInstaller --noconfirm --clean AUDITOR_IA.spec
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller fallo.' }
 
-$distRoot = Join-Path $PSScriptRoot 'dist\AUDITOR_IA_8.0.0_BUILD'
+$distRoot = Join-Path $PSScriptRoot 'dist\AUDITOR_IA_8.0.1_BUILD'
 $appExe = Join-Path $distRoot 'AUDITOR_IA.exe'
 
 if (-not (Test-Path $appExe -PathType Leaf)) {
@@ -84,7 +83,6 @@ $requiredBundled = @(
     (Join-Path $bundleRoot 'ffmpeg\bin\ffmpeg.exe'),
     (Join-Path $bundleRoot 'ffmpeg\bin\ffprobe.exe'),
     (Join-Path $bundleRoot 'nemo-speech\bin\nemo-speech.exe'),
-    (Join-Path $bundleRoot 'models\nemotron-3.5-asr-streaming-0.6b.q8_0.gguf'),
     (Join-Path $bundleRoot 'models\sortformer-v2-q8_0.gguf'),
     (Join-Path $bundleRoot 'models\small\model.bin'),
     (Join-Path $bundleRoot 'models\small\config.json'),
@@ -98,7 +96,7 @@ foreach ($required in $requiredBundled) {
     }
 }
 
-Write-Host 'PyInstaller OK: FFmpeg + NeMo + Nemotron + SortFormer + Faster-Whisper + recursos presentes.'
+Write-Host 'PyInstaller OK: FFmpeg + NeMo diarizacion + SortFormer + Faster-Whisper + recursos presentes.'
 
 # -----------------------------------------------------------------------------
 # 3) Autoprueba REAL del EXE empaquetado
@@ -133,6 +131,15 @@ if (-not (Test-Path $okFile)) {
 Write-Host (Get-Content $okFile -Raw)
 Write-Host 'Autoprueba del EXE: OK.'
 
+# Comprueba explícitamente que el mismo EXE windowed puede arrancar en modo
+# worker. Esta es la ruta que usa el botón Transcribir en la instalación real.
+Write-Host 'Probando modo --file-worker del EXE empaquetado...'
+$workerSmoke = Start-Process -FilePath $appExe -ArgumentList '--file-worker-smoke' -WorkingDirectory $PSScriptRoot -PassThru -Wait
+if ($workerSmoke.ExitCode -ne 0) {
+    throw "El EXE no puede iniciar el worker de archivos. Codigo: $($workerSmoke.ExitCode)"
+}
+Write-Host 'Worker de archivos: OK.'
+
 # -----------------------------------------------------------------------------
 # 4) Inno Setup
 # -----------------------------------------------------------------------------
@@ -159,9 +166,9 @@ Write-Host "Inno Setup: $iscc"
 & $iscc 'installer\AUDITOR_IA.iss'
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup fallo.' }
 
-$setup = Join-Path $PSScriptRoot 'release\AUDITOR_IA_8.0.0_Setup.exe'
+$setup = Join-Path $PSScriptRoot 'release\AUDITOR_IA_8.0.1_Setup.exe'
 if (-not (Test-Path $setup -PathType Leaf)) {
-    throw 'Inno Setup termino sin generar release\AUDITOR_IA_8.0.0_Setup.exe.'
+    throw 'Inno Setup termino sin generar release\AUDITOR_IA_8.0.1_Setup.exe.'
 }
 
 $setupSize = (Get-Item $setup).Length

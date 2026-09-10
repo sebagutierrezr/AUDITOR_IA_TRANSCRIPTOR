@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from PySide6.QtCore import (
     QStandardPaths,
     QDir,
     QThread,
+    QTimer,
     Qt,
     Signal,
 )
@@ -34,9 +36,6 @@ from app.services.export_service import ExportService
 from app.services.history_service import HistoryService
 from app.services.paths_service import AppPaths
 from app.workers.export_worker import ExportWorker
-
-
-EVENT_PREFIX = "AUDITOR_EVENT|"
 
 
 class DropZone(QFrame):
@@ -104,7 +103,17 @@ class FilesPage(QFrame):
         self._stdout_buffer = ""
         self._job_path: Path | None = None
         self._result_path: Path | None = None
+        self._progress_path: Path | None = None
         self._completed_event = False
+        self._last_worker_warning = ""
+        self._worker_started_at = 0.0
+        self._last_progress_seen_at = 0.0
+        self._last_progress_signature = ""
+        self._watchdog_triggered = False
+
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(250)
+        self._progress_timer.timeout.connect(self._poll_worker_progress)
 
         self._export_thread = None
         self._export_worker = None
@@ -116,7 +125,7 @@ class FilesPage(QFrame):
         title = QLabel("Transcribir entrevista")
         title.setObjectName("PageTitle")
         subtitle = QLabel(
-            "Nemotron 3.5 + SortFormer · transcripción y hablantes por palabra"
+            "Faster-Whisper Small + SortFormer · transcripción local y separación de voces"
         )
         subtitle.setObjectName("PageSubtitle")
         root.addWidget(title)
@@ -202,10 +211,18 @@ class FilesPage(QFrame):
             lambda: self._change_current_speaker(False)
         )
 
+        self._swap_roles_button = QPushButton("Invertir roles")
+        self._swap_roles_button.setObjectName("SecondaryButton")
+        self._swap_roles_button.setToolTip(
+            "Intercambia AGENTE y CLIENTE en toda la transcripción."
+        )
+        self._swap_roles_button.clicked.connect(self._swap_all_speakers)
+
         header.addWidget(transcript_title)
         header.addStretch()
         header.addWidget(self._agent_button)
         header.addWidget(self._client_button)
+        header.addWidget(self._swap_roles_button)
         transcript_layout.addLayout(header)
 
         self._editor = QPlainTextEdit()
@@ -343,10 +360,17 @@ class FilesPage(QFrame):
         job_id = uuid.uuid4().hex
         self._job_path = self._paths.temp / f"job_{job_id}.json"
         self._result_path = self._paths.temp / f"result_{job_id}.json"
+        self._progress_path = self._paths.temp / f"progress_{job_id}.json"
+        self._last_worker_warning = ""
+        self._worker_started_at = time.monotonic()
+        self._last_progress_seen_at = self._worker_started_at
+        self._last_progress_signature = ""
+        self._watchdog_triggered = False
 
         job = {
             "audio_path": str(self._selected_file),
             "result_path": str(self._result_path),
+            "progress_path": str(self._progress_path),
             "language": settings.language,
             "uppercase": settings.uppercase,
             "show_timestamps": settings.show_timestamps,
@@ -360,9 +384,11 @@ class FilesPage(QFrame):
         )
 
         process = QProcess(self)
-        process.setProcessChannelMode(
-            QProcess.ProcessChannelMode.MergedChannels
-        )
+        # El worker se comunica por archivos JSON. Descartar stdout/stderr evita
+        # que una librería nativa pueda bloquear el proceso por llenar una tubería.
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.setStandardOutputFile(QProcess.nullDevice())
+        process.setStandardErrorFile(QProcess.nullDevice())
 
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYANNOTE_METRICS_ENABLED", "0")
@@ -386,7 +412,6 @@ class FilesPage(QFrame):
         process.setProgram(program)
         process.setArguments(arguments)
         process.setWorkingDirectory(str(self._paths.root))
-        process.readyReadStandardOutput.connect(self._read_process_output)
         process.started.connect(self._process_started)
         process.finished.connect(self._process_finished)
         process.errorOccurred.connect(self._process_error)
@@ -399,34 +424,47 @@ class FilesPage(QFrame):
             "La IA está ejecutándose en un proceso independiente."
         )
         process.start()
+        self._progress_timer.start()
 
     def _process_started(self) -> None:
         self.status_changed.emit("PROCESANDO ARCHIVO")
 
-    def _read_process_output(self) -> None:
-        if self._process is None:
+    def _poll_worker_progress(self) -> None:
+        path = self._progress_path
+        now = time.monotonic()
+
+        # Watchdog: si el proceso sigue vivo pero no entrega ninguna señal durante
+        # cuatro minutos, se considera atascado y se corta en vez de dejar la UI
+        # indefinidamente en "procesando".
+        if (
+            self._process is not None
+            and self._process.state() != QProcess.ProcessState.NotRunning
+            and not self._watchdog_triggered
+            and now - max(self._last_progress_seen_at, self._worker_started_at) > 240.0
+        ):
+            self._watchdog_triggered = True
+            self._completed_event = True
+            self._process.kill()
+            self._show_processing_error(
+                "El motor dejó de responder durante más de 4 minutos y fue detenido. "
+                "La aplicación sigue operativa; vuelve a intentar con el mismo audio."
+            )
             return
 
-        data = bytes(
-            self._process.readAllStandardOutput()
-        ).decode("utf-8", errors="replace")
-        self._stdout_buffer += data
-
-        while "\n" in self._stdout_buffer:
-            line, self._stdout_buffer = self._stdout_buffer.split("\n", 1)
-            self._handle_process_line(line.strip())
-
-    def _handle_process_line(self, line: str) -> None:
-        if not line.startswith(EVENT_PREFIX):
+        if path is None or not path.is_file():
             return
-
         try:
-            event = json.loads(line[len(EVENT_PREFIX):])
-        except json.JSONDecodeError:
+            raw = path.read_text(encoding="utf-8")
+            event = json.loads(raw)
+        except Exception:
             return
 
-        kind = event.get("type")
+        signature = raw
+        if signature != self._last_progress_signature:
+            self._last_progress_signature = signature
+            self._last_progress_seen_at = now
 
+        kind = str(event.get("type", "progress"))
         if kind == "progress":
             value = max(0, min(100, int(event.get("value", 0))))
             message = str(event.get("message", "Procesando..."))
@@ -434,16 +472,15 @@ class FilesPage(QFrame):
             self._progress.setFormat(message)
             self._process_detail.setText(message)
             self.status_changed.emit(message)
-
         elif kind == "completed":
             self._completed_event = True
-            self._load_worker_result()
-
+            self._last_worker_warning = str(event.get("warning", "") or "")
         elif kind == "failed":
-            self._completed_event = True
-            error_type = str(event.get("error_type", "Error"))
-            message = str(event.get("message", "Error desconocido."))
-            self._show_processing_error(f"{error_type}: {message}")
+            if not self._completed_event:
+                self._completed_event = True
+                error_type = str(event.get("error_type", "Error"))
+                message = str(event.get("message", "Error desconocido."))
+                self._show_processing_error(f"{error_type}: {message}")
 
     def _load_worker_result(self) -> None:
         if self._result_path is None or not self._result_path.is_file():
@@ -474,6 +511,7 @@ class FilesPage(QFrame):
                 language=str(payload.get("language", "ES")),
                 segments=segments,
             )
+            self._last_worker_warning = str(payload.get("warning", "") or "")
         except Exception as exc:
             self._show_processing_error(
                 f"No fue posible abrir el resultado: {type(exc).__name__}: {exc}"
@@ -483,20 +521,25 @@ class FilesPage(QFrame):
         self._on_completed(conversation)
 
     def _process_finished(self, exit_code: int, exit_status) -> None:
-        self._read_process_output()
+        self._progress_timer.stop()
+        self._poll_worker_progress()
 
-        if (
-            not self._completed_event
-            and exit_code == 0
-            and self._result_path is not None
-            and self._result_path.is_file()
-        ):
+        if exit_code == 0 and self._result_path is not None and self._result_path.is_file():
             self._load_worker_result()
             self._completed_event = True
-        elif not self._completed_event and exit_code != 0:
+        elif exit_code != 0 and not self._completed_event:
+            detail = ""
+            if self._progress_path is not None and self._progress_path.is_file():
+                try:
+                    event = json.loads(self._progress_path.read_text(encoding="utf-8"))
+                    detail = str(event.get("message", ""))
+                except Exception:
+                    pass
             self._show_processing_error(
-                "El proceso de IA terminó inesperadamente. "
-                f"Código: {exit_code}"
+                detail or (
+                    "El proceso de IA terminó inesperadamente. "
+                    f"Código: {exit_code}"
+                )
             )
 
         self._cleanup_process_files()
@@ -504,6 +547,7 @@ class FilesPage(QFrame):
         self._set_busy(False)
 
     def _process_error(self, error) -> None:
+        self._progress_timer.stop()
         if self._completed_event:
             return
         self._completed_event = True
@@ -525,7 +569,7 @@ class FilesPage(QFrame):
         QMessageBox.critical(self, "Transcripción", message)
 
     def _cleanup_process_files(self) -> None:
-        for path in (self._job_path, self._result_path):
+        for path in (self._job_path, self._result_path, self._progress_path):
             if path is not None:
                 try:
                     path.unlink(missing_ok=True)
@@ -533,6 +577,7 @@ class FilesPage(QFrame):
                     pass
         self._job_path = None
         self._result_path = None
+        self._progress_path = None
 
     def _on_completed(self, conversation: Conversation) -> None:
         settings = self._config_service.load()
@@ -551,7 +596,13 @@ class FilesPage(QFrame):
         self.history_changed.emit()
         self._progress.setValue(100)
         self._progress.setFormat("Finalizado")
-        self._process_detail.setText("Transcripción finalizada.")
+        if self._last_worker_warning:
+            self._process_detail.setText(
+                "Transcripción finalizada. La diarización acústica usó respaldo contextual: "
+                + self._last_worker_warning[:220]
+            )
+        else:
+            self._process_detail.setText("Transcripción finalizada con separación acústica de voces.")
         self.status_changed.emit("LISTO")
         self._update_buttons()
 
@@ -627,6 +678,42 @@ class FilesPage(QFrame):
         cursor.insertText(replacement)
         self._editor.setTextCursor(cursor)
 
+    def _swap_all_speakers(self) -> None:
+        text = self._editor.toPlainText()
+        if not text.strip():
+            return
+
+        settings = self._config_service.load()
+        agent = settings.speaker_one_label
+        client = settings.speaker_two_label
+
+        # Placeholder imposible de confundir con texto normal. Se reemplaza
+        # solo la etiqueta al inicio de cada línea, conservando timestamps.
+        placeholder = "__AUDITOR_ROLE_SWAP__"
+        lines = []
+        for line in text.splitlines():
+            line = re.sub(
+                rf"^(\s*(?:\[[^\]]+\]\s*)?){re.escape(agent)}(\s*:)" ,
+                rf"\1{placeholder}\2",
+                line,
+                flags=re.I,
+            )
+            line = re.sub(
+                rf"^(\s*(?:\[[^\]]+\]\s*)?){re.escape(client)}(\s*:)" ,
+                rf"\1{agent}\2",
+                line,
+                flags=re.I,
+            )
+            line = line.replace(placeholder, client)
+            lines.append(line)
+
+        cursor = self._editor.textCursor()
+        position = cursor.position()
+        self._editor.setPlainText("\n".join(lines))
+        cursor = self._editor.textCursor()
+        cursor.setPosition(min(position, len(self._editor.toPlainText())))
+        self._editor.setTextCursor(cursor)
+
     @staticmethod
     def _replace_speaker_labels(
         text: str,
@@ -671,6 +758,7 @@ class FilesPage(QFrame):
         for button in (
             self._agent_button,
             self._client_button,
+            self._swap_roles_button,
             self._txt_button,
             self._word_button,
             self._update_history_button,

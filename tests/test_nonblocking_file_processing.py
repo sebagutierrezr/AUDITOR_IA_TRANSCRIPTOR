@@ -9,12 +9,16 @@ class NonBlockingFileProcessingTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(__file__).resolve().parents[1]
 
-    def test_files_page_uses_qprocess(self):
-        path = self.root / "app/ui/pages/files_page.py"
-        text = path.read_text(encoding="utf-8")
+    def test_files_page_uses_isolated_qprocess_and_json_progress(self):
+        text = (self.root / "app/ui/pages/files_page.py").read_text(encoding="utf-8")
         self.assertIn("QProcess", text)
         self.assertIn('"--file-worker"', text)
+        self.assertIn('f"progress_{job_id}.json"', text)
+        self.assertIn("QProcess.nullDevice()", text)
+        self.assertIn("_poll_worker_progress", text)
+        self.assertIn("240.0", text)
         self.assertNotIn("TranscriptionWorker(", text)
+        self.assertNotIn('EVENT_PREFIX = "AUDITOR_EVENT|"', text)
 
     def test_loading_file_does_not_open_or_stat_audio(self):
         path = self.root / "app/ui/pages/files_page.py"
@@ -36,12 +40,13 @@ class NonBlockingFileProcessingTests(unittest.TestCase):
         ):
             self.assertNotIn(item, source)
 
-    def test_file_worker_protocol_exists(self):
-        path = self.root / "app/file_worker_cli.py"
-        text = path.read_text(encoding="utf-8")
-        self.assertIn('EVENT_PREFIX = "AUDITOR_EVENT|"', text)
-        self.assertIn("DiarizationService", text)
-        self.assertIn("FasterWhisperEngine", text)
+    def test_worker_has_no_stdout_ipc(self):
+        text = (self.root / "app/file_worker_cli.py").read_text(encoding="utf-8")
+        self.assertIn("class Progress", text)
+        self.assertIn("progress_path", text)
+        self.assertIn("FileTranscriptionService", text)
+        self.assertNotIn("EVENT_PREFIX", text)
+        self.assertNotIn("print(", text)
 
 
 if __name__ == "__main__":

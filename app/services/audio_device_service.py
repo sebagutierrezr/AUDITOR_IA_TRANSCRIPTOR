@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-import soundcard as sc
 import sounddevice as sd
 
 
@@ -23,10 +22,12 @@ class OutputDevice:
     raw_name: str
     display_name: str
     is_default: bool = False
+    sample_rate: int = 48000
+    channels: int = 2
 
 
 class AudioDeviceService:
-    """Enumera dispositivos sin abrirlos ni modificar Windows."""
+    """Enumera micrófonos y loopbacks WASAPI de forma estable en Windows."""
 
     BRAND_REPLACEMENTS = {
         "logi": "Logitech",
@@ -44,6 +45,7 @@ class AudioDeviceService:
             flags=re.IGNORECASE,
         )
         value = re.sub(r"^\(?\d+\s*-\s*", "", value)
+        value = re.sub(r"\s*\[loopback\]\s*$", "", value, flags=re.IGNORECASE)
         value = value.strip(" ()")
         lowered = value.lower()
         for source, target in cls.BRAND_REPLACEMENTS.items():
@@ -75,149 +77,105 @@ class AudioDeviceService:
 
     @classmethod
     def list_inputs(cls) -> list[InputDevice]:
-        """
-        Devuelve una sola entrada por dispositivo físico.
-
-        El índice exacto que Windows tiene como predeterminado se conserva.
-        No se reemplaza silenciosamente por otra variante WASAPI/MME del mismo
-        dispositivo físico, porque eso puede abrir una entrada sin señal.
-        """
         devices = sd.query_devices()
         host_apis = sd.query_hostapis()
-        default_index = int(sd.default.device[0])
+        try:
+            default_index = int(sd.default.device[0])
+        except Exception:
+            default_index = -1
 
         default_physical_key = ""
         if 0 <= default_index < len(devices):
-            default_physical_key = cls.physical_key(
-                str(devices[default_index].get("name", ""))
-            )
+            default_physical_key = cls.physical_key(str(devices[default_index].get("name", "")))
 
         grouped: dict[str, tuple[int, InputDevice]] = {}
-
         for index, info in enumerate(devices):
             if int(info.get("max_input_channels", 0)) <= 0:
                 continue
 
             raw_name = str(info.get("name", f"Micrófono {index}"))
             lowered = raw_name.lower()
-
-            if any(
-                token in lowered
-                for token in (
-                    "microsoft sound mapper",
-                    "asignador de sonido microsoft",
-                    "primary sound capture",
-                    "controlador primario de captura",
-                )
-            ):
+            if any(token in lowered for token in (
+                "microsoft sound mapper",
+                "asignador de sonido microsoft",
+                "primary sound capture",
+                "controlador primario de captura",
+            )):
                 continue
 
             host_name = ""
             try:
-                host_name = str(
-                    host_apis[int(info.get("hostapi", -1))]["name"]
-                )
+                host_name = str(host_apis[int(info.get("hostapi", -1))]["name"])
             except Exception:
                 pass
 
             physical_key = cls.physical_key(raw_name)
-            is_default_physical = (
-                bool(default_physical_key)
-                and physical_key == default_physical_key
-            )
-
-            # El índice predeterminado exacto de Windows tiene prioridad
-            # absoluta. Solo si no es el predeterminado se usa la prioridad
-            # del backend como criterio secundario.
-            priority = (
-                100000
-                if index == default_index
-                else cls._host_priority(host_name) * 100
-            )
-
+            is_default_physical = bool(default_physical_key) and physical_key == default_physical_key
+            priority = 100000 if index == default_index else cls._host_priority(host_name) * 100
             device = InputDevice(
                 index=index,
                 raw_name=raw_name,
                 display_name=cls.clean_name(raw_name),
-                sample_rate=int(
-                    float(info.get("default_samplerate", 48000))
-                ),
+                sample_rate=int(float(info.get("default_samplerate", 48000))),
                 host_api=host_name,
                 is_default=is_default_physical,
             )
-
             current = grouped.get(physical_key)
             if current is None or priority > current[0]:
                 grouped[physical_key] = (priority, device)
 
         result = [item[1] for item in grouped.values()]
-        result.sort(
-            key=lambda item: (
-                not item.is_default,
-                item.display_name.lower(),
-            )
-        )
+        result.sort(key=lambda item: (not item.is_default, item.display_name.lower()))
         return result
 
     @classmethod
     def list_outputs(cls) -> list[OutputDevice]:
+        """Devuelve directamente dispositivos de entrada WASAPI loopback.
+
+        PyAudioWPatch expone los loopbacks como dispositivos de entrada; esto
+        evita depender de coincidencias frágiles entre IDs de altavoz y micrófono.
+        """
         try:
-            default = sc.default_speaker()
-            default_id = str(default.id) if default else ""
-        except Exception:
-            default_id = ""
+            import pyaudiowpatch as pyaudio
+        except Exception as exc:
+            raise RuntimeError(
+                "El componente WASAPI de audio no está disponible. Reinstala AUDITOR IA 8.0.1."
+            ) from exc
 
-        grouped: dict[str, OutputDevice] = {}
-        for item in sc.all_speakers():
-            raw_name = str(item.name)
-            key = cls.physical_key(raw_name)
-            device = OutputDevice(
-                id=str(item.id),
-                raw_name=raw_name,
-                display_name=cls.clean_name(raw_name),
-                is_default=str(item.id) == default_id,
-            )
-            current = grouped.get(key)
-            if current is None or (device.is_default and not current.is_default):
-                grouped[key] = device
+        result: list[OutputDevice] = []
+        with pyaudio.PyAudio() as manager:
+            default_index = -1
+            try:
+                default_index = int(manager.get_default_wasapi_loopback()["index"])
+            except Exception:
+                pass
 
-        result = list(grouped.values())
+            grouped: dict[str, OutputDevice] = {}
+            for info in manager.get_loopback_device_info_generator():
+                index = int(info.get("index", -1))
+                if index < 0:
+                    continue
+                raw_name = str(info.get("name", f"Salida {index}"))
+                key = cls.physical_key(raw_name)
+                device = OutputDevice(
+                    id=str(index),
+                    raw_name=raw_name,
+                    display_name=cls.clean_name(raw_name),
+                    is_default=index == default_index,
+                    sample_rate=int(float(info.get("defaultSampleRate", 48000))),
+                    channels=max(1, min(2, int(info.get("maxInputChannels", 2) or 2))),
+                )
+                current = grouped.get(key)
+                if current is None or (device.is_default and not current.is_default):
+                    grouped[key] = device
+            result = list(grouped.values())
+
         result.sort(key=lambda item: (not item.is_default, item.display_name.lower()))
         return result
 
     @staticmethod
-    def get_loopback(output_id: str, output_name: str):
-        loopbacks = [
-            item
-            for item in sc.all_microphones(include_loopback=True)
-            if bool(getattr(item, "isloopback", False))
-        ]
-        target = " ".join(str(output_name or "").lower().split())
-
-        # Algunos controladores comparten ID; otros solamente el nombre físico.
-        for item in loopbacks:
-            if str(item.id) == str(output_id):
-                return item
-
-        for item in loopbacks:
-            current = " ".join(str(item.name).lower().split())
-            if current == target or current in target or target in current:
-                return item
-
-        target_words = {
-            word
-            for word in re.sub(r"[^a-z0-9áéíóúüñ]+", " ", target).split()
-            if len(word) > 2
-        }
-        best = None
-        best_score = 0
-        for item in loopbacks:
-            current_words = set(
-                re.sub(r"[^a-z0-9áéíóúüñ]+", " ", str(item.name).lower()).split()
-            )
-            score = len(target_words & current_words)
-            if score > best_score:
-                best, best_score = item, score
-        if best is not None and best_score > 0:
-            return best
-        raise RuntimeError("No fue posible asociar la salida seleccionada con su captura de audio.")
+    def loopback_index(output_id: str) -> int:
+        try:
+            return int(str(output_id).strip())
+        except Exception as exc:
+            raise RuntimeError("La salida de audio seleccionada ya no es válida.") from exc

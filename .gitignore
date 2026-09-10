@@ -23,3 +23,9 @@ exports/*
 
 data/transcription_history.json
 config/settings.json
+
+build_assets/
+.nemo-converter/
+.convert-venv/
+runtime_self_test_ok.txt
+runtime_self_test_error.txt

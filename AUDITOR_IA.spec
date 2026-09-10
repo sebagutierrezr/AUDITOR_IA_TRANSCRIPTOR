@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 root = Path.cwd()
 
@@ -8,29 +9,42 @@ datas = [
     ('config', 'config'),
 ]
 
-for folder, target in [
-    ('build_assets/models', 'models'),
+for source, target in [
+    ('build_assets/models/small', 'models/small'),
+    ('build_assets/models/sortformer-v2-q8_0.gguf', 'models'),
     ('build_assets/nemo-speech', 'nemo-speech'),
     ('build_assets/ffmpeg', 'ffmpeg'),
 ]:
-    path = root / folder
+    path = root / source
     if not path.exists():
         raise RuntimeError(f'Falta activo de build requerido por PyInstaller: {path}')
     datas.append((str(path), target))
 
+datas += collect_data_files('faster_whisper')
+
+binaries = []
 hiddenimports = [
-    'soundcard',
-    'sounddevice',
     'docx',
     'faster_whisper',
     'ctranslate2',
     'av',
+    'psutil',
 ]
+
+# PyAudioWPatch contiene una extensión nativa; sounddevice incluye runtime de
+# PortAudio/cffi según la rueda. Collect_all evita que el EXE funcione en CI pero
+# pierda el backend de audio al instalarlo en otro PC.
+for package in ('pyaudiowpatch', 'sounddevice'):
+    p_datas, p_binaries, p_hidden = collect_all(package)
+    datas += p_datas
+    binaries += p_binaries
+    hiddenimports += p_hidden
+
 
 a = Analysis(
     ['main.py'],
     pathex=[str(root)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -43,6 +57,7 @@ a = Analysis(
         'pyannote',
         'speechbrain',
         'sklearn',
+        'soundcard',
     ],
     noarchive=False,
 )
@@ -61,9 +76,6 @@ exe = EXE(
     upx=False,
     console=False,
     icon='resources/logo.ico',
-    # PyInstaller 6 pone los datos en _internal por defecto. La aplicacion
-    # historicamente espera resources/, models/, ffmpeg/ y nemo-speech/ junto
-    # al EXE. Forzamos el layout plano y eliminamos esa ambiguedad.
     contents_directory='.',
 )
 
@@ -74,5 +86,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='AUDITOR_IA_8.0.0_BUILD',
+    name='AUDITOR_IA_8.0.1_BUILD',
 )

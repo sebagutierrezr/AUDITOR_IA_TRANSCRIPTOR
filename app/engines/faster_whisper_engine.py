@@ -118,7 +118,7 @@ class FasterWhisperEngine(SpeechEngine):
                 message = (
                     f"EL MODELO {self._model_name.upper()} "
                     "NO ESTÁ INSTALADO O ESTÁ INCOMPLETO. "
-                    "REINSTALA AUDITOR IA 8.0.0."
+                    "REINSTALA AUDITOR IA 8.0.1."
                 )
                 self._logger.error(message)
                 raise RuntimeError(message)
@@ -161,6 +161,10 @@ class FasterWhisperEngine(SpeechEngine):
 
             return self._model
 
+    def warmup(self) -> None:
+        """Carga el modelo sin bloquear la interfaz Qt."""
+        self._load_model(None)
+
     def transcribe(
         self,
         audio_path: Path,
@@ -189,13 +193,9 @@ class FasterWhisperEngine(SpeechEngine):
             str(audio_path),
             language=language_code,
             task="transcribe",
-            beam_size=6,
-            best_of=6,
+            beam_size=3,
+            best_of=3,
             vad_filter=False,
-            vad_parameters={
-                "min_silence_duration_ms": 350,
-                "speech_pad_ms": 250,
-            },
             condition_on_previous_text=True,
             temperature=0.0,
             no_speech_threshold=0.55,
@@ -331,8 +331,8 @@ class FasterWhisperEngine(SpeechEngine):
             str(audio_path),
             language=language_code,
             task="transcribe",
-            beam_size=6,
-            best_of=6,
+            beam_size=1,
+            best_of=1,
             vad_filter=False,
             condition_on_previous_text=False,
             temperature=0.0,
