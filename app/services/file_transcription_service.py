@@ -17,8 +17,8 @@ class FileTranscriptionService:
     igualmente con un respaldo contextual en vez de perder toda la transcripción.
     """
 
-    def __init__(self) -> None:
-        self.asr = FasterWhisperEngine("ALTA")
+    def __init__(self, performance_mode: str = "AUTO") -> None:
+        self.asr = FasterWhisperEngine("ALTA", performance_mode)
         self.diar = NemoDiarizationService()
 
     @staticmethod

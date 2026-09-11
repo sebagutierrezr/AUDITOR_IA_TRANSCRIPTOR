@@ -11,12 +11,15 @@ from app.engines.base_speech_engine import (
 )
 from app.models.conversation import Conversation, Segment
 from app.services.paths_service import AppPaths
+from app.services.system_profile_service import SystemProfileService
+from app.version import APP_VERSION
 
 
 class FasterWhisperEngine(SpeechEngine):
     """Motor local con modelos verificados dentro de la aplicación."""
 
     MODEL_MAP = {"ALTA": "small"}
+    ECO_MODEL = "base"
 
     REQUIRED_MODEL_FILES = (
         "model.bin",
@@ -24,17 +27,19 @@ class FasterWhisperEngine(SpeechEngine):
         "tokenizer.json",
     )
 
-    def __init__(self, profile: str = "ALTA") -> None:
+    def __init__(self, profile: str = "ALTA", performance_mode: str = "AUTO") -> None:
         self._paths = AppPaths()
         self._profile = (
             profile
             if profile in self.MODEL_MAP
             else "ALTA"
         )
-        self._model_name = self.MODEL_MAP[self._profile]
         self._model: WhisperModel | None = None
         self._model_lock = threading.RLock()
         self._logger = logging.getLogger(__name__)
+        self._performance_mode = performance_mode
+        self._system_profile = SystemProfileService.detect(performance_mode)
+        self._model_name = self._desired_model_name()
 
     @property
     def model_name(self) -> str:
@@ -48,12 +53,15 @@ class FasterWhisperEngine(SpeechEngine):
     def model_path(self) -> Path:
         return self._paths.models / self._model_name
 
+    def _desired_model_name(self) -> str:
+        if self._system_profile.tuning.profile == "ECO":
+            return self.ECO_MODEL
+        return self.MODEL_MAP.get(self._profile, "small")
+
     def model_status(self) -> dict[str, bool]:
         return {
-            profile: self._model_files_ready(
-                self._paths.models / model_name
-            )
-            for profile, model_name in self.MODEL_MAP.items()
+            "BASE": self._model_files_ready(self._paths.models / self.ECO_MODEL),
+            "ALTA": self._model_files_ready(self._paths.models / "small"),
         }
 
     def is_ready(self) -> bool:
@@ -86,18 +94,12 @@ class FasterWhisperEngine(SpeechEngine):
         return " · ".join(parts) or "SIN MODELOS"
 
     def set_profile(self, profile: str) -> None:
-        normalized = (
-            profile
-            if profile in self.MODEL_MAP
-            else "ALTA"
-        )
-        new_name = self.MODEL_MAP[normalized]
-
+        normalized = profile if profile in self.MODEL_MAP else "ALTA"
+        self._profile = normalized
+        new_name = self._desired_model_name()
         if new_name != self._model_name:
             self.release()
-
-        self._profile = normalized
-        self._model_name = new_name
+            self._model_name = new_name
 
     def _model_files_ready(self, path: Path) -> bool:
         return all(
@@ -118,7 +120,7 @@ class FasterWhisperEngine(SpeechEngine):
                 message = (
                     f"EL MODELO {self._model_name.upper()} "
                     "NO ESTÁ INSTALADO O ESTÁ INCOMPLETO. "
-                    "REINSTALA AUDITOR IA 8.0.1."
+                    f"REINSTALA AUDITOR IA {APP_VERSION}."
                 )
                 self._logger.error(message)
                 raise RuntimeError(message)
@@ -130,12 +132,9 @@ class FasterWhisperEngine(SpeechEngine):
                     f"{self._model_name.upper()}...",
                 )
 
-            available = max(2, os.cpu_count() or 4)
-            # Reservar CPU para Windows y la interfaz. La calidad no cambia.
-            threads = max(
-                2,
-                min(4, available - 2),
-            )
+            # Perfil adaptativo: deja recursos libres para Windows y Qt.
+            self._system_profile = SystemProfileService.detect(self._performance_mode)
+            threads = self._system_profile.tuning.cpu_threads
 
             if callback:
                 callback(
@@ -193,8 +192,8 @@ class FasterWhisperEngine(SpeechEngine):
             str(audio_path),
             language=language_code,
             task="transcribe",
-            beam_size=3,
-            best_of=3,
+            beam_size=self._system_profile.tuning.file_beam_size,
+            best_of=self._system_profile.tuning.file_beam_size,
             vad_filter=False,
             condition_on_previous_text=True,
             temperature=0.0,
@@ -331,14 +330,18 @@ class FasterWhisperEngine(SpeechEngine):
             str(audio_path),
             language=language_code,
             task="transcribe",
-            beam_size=1,
-            best_of=1,
-            vad_filter=False,
+            beam_size=self._system_profile.tuning.live_beam_size,
+            best_of=self._system_profile.tuning.live_beam_size,
+            vad_filter=True,
+            vad_parameters={
+                "min_silence_duration_ms": 260,
+                "speech_pad_ms": 180,
+            },
             condition_on_previous_text=False,
             temperature=0.0,
-            no_speech_threshold=0.58,
-            compression_ratio_threshold=2.35,
-            log_prob_threshold=-1.0,
+            no_speech_threshold=0.48,
+            compression_ratio_threshold=2.20,
+            log_prob_threshold=-0.85,
 
             # En vivo no necesita el coste adicional de alineación por palabra.
             word_timestamps=False,
@@ -356,6 +359,12 @@ class FasterWhisperEngine(SpeechEngine):
             "hasta la próxima",
             "hasta la proxima",
             "conciencia en español",
+            "suscríbete",
+            "suscribete",
+            "suscríbete al canal",
+            "suscribete al canal",
+            "dale like",
+            "activa la campanita",
         )
 
         segments: list[Segment] = []
@@ -367,6 +376,21 @@ class FasterWhisperEngine(SpeechEngine):
                 continue
 
             lowered = text.casefold()
+            no_speech_prob = float(getattr(item, "no_speech_prob", 0.0) or 0.0)
+            avg_logprob = float(getattr(item, "avg_logprob", 0.0) or 0.0)
+            compression_ratio = float(getattr(item, "compression_ratio", 0.0) or 0.0)
+            duration = max(0.0, float(item.end) - float(item.start))
+
+            # En vivo preferimos omitir una frase dudosa antes que inventar
+            # texto. Estos metadatos vienen del propio decoder de Whisper.
+            if no_speech_prob >= 0.58:
+                continue
+            if avg_logprob < -0.92:
+                continue
+            if compression_ratio > 2.25:
+                continue
+            if duration < 0.45 and len(text.split()) <= 2:
+                continue
 
             if any(
                 fragment in lowered
@@ -398,6 +422,21 @@ class FasterWhisperEngine(SpeechEngine):
             language=detected,
             segments=segments,
         )
+
+    def set_performance_mode(self, mode: str) -> None:
+        normalized = str(mode or "AUTO").upper()
+        if normalized != self._performance_mode:
+            old_model = self._model_name
+            self._performance_mode = normalized
+            self._system_profile = SystemProfileService.detect(normalized)
+            new_model = self._desired_model_name()
+            if new_model != old_model:
+                self.release()
+                self._model_name = new_model
+
+    @property
+    def system_profile(self):
+        return self._system_profile
 
     def release(self) -> None:
         with self._model_lock:

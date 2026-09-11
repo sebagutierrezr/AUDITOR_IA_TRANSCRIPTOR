@@ -1,0 +1,42 @@
+AUDITOR IA 8.1.0 UNIVERSAL - VALIDACION DE FUENTE
+Fecha de preparación: 2026-09-10
+
+RESULTADOS EJECUTADOS EN EL ENTORNO DE DESARROLLO
+- python -m compileall -q app main.py: OK
+- unittest discover tests/test_*.py: 50/50 OK
+- YAML .github/workflows/build-release.yml: OK
+- Búsqueda de referencias de versión 8.0.3 en código distribuido: 0
+- Búsqueda de dependencia por nombre "Logitech" en app/config: 0
+
+PRUEBAS CUBIERTAS
+- protocolo de worker de archivos
+- UI de selección de archivos no bloqueante
+- clasificación AGENTE/CLIENTE
+- diarización y rescate de dos hablantes
+- filtros de alucinación
+- scroll manual y auto-seguimiento
+- eco de audio del PC / duplicación AGENTE-CLIENTE
+- selección de dispositivos guardados y predeterminados
+- fallback PyAudioWPatch -> SoundCard
+- perfiles ECO/BALANCEADO/CALIDAD
+- versión/installer/build
+- scripts de compatibilidad Windows
+
+VALIDACIONES QUE EJECUTA GITHUB ACTIONS EN WINDOWS
+- instalación de dependencias Python 3.11
+- import de PyAudioWPatch/SoundCard/sounddevice/Faster-Whisper
+- descarga de FFmpeg Shared
+- NeMo-Speech CPU doctor
+- conversión de SortFormer
+- descarga de Faster-Whisper Base y Small
+- 50 pruebas Python
+- PyInstaller
+- autoprueba del EXE empaquetado
+- smoke test --file-worker
+- Inno Setup
+
+LIMITACION HONESTA
+No es posible simular físicamente desde este entorno todos los drivers, headsets,
+Bluetooth, chipsets y dispositivos WASAPI existentes. Por eso la distribución
+8.1.0 incorpora diagnóstico y dos backends de loopback, y la matriz de aceptación
+incluye pruebas en Windows real antes de declarar una build de producción.

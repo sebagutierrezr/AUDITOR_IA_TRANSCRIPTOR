@@ -377,6 +377,7 @@ class FilesPage(QFrame):
             "speaker_one_label": settings.speaker_one_label,
             "speaker_two_label": settings.speaker_two_label,
             "first_speaker_is_one": settings.first_speaker_agent,
+            "performance_mode": settings.performance_mode,
         }
         self._job_path.write_text(
             json.dumps(job, ensure_ascii=False),

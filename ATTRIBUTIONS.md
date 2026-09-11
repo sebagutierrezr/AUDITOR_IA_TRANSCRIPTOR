@@ -10,9 +10,9 @@
 - Runtime: release v0.1.0 CPU para Windows.
 - Modelo de diarización: `nvidia/diar_streaming_sortformer_4spk-v2`, convertido localmente a GGUF Q8 durante el build.
 
-## PyAudioWPatch
-- Proyecto: PyAudio/PortAudio fork con soporte WASAPI loopback.
-- Uso: captura local del audio de salida de Windows para el modo En vivo.
+## SoundCard
+- Proyecto: SoundCard para Python.
+- Uso: captura WASAPI loopback del audio de salida de Windows para el modo En vivo.
 
 ## FFmpeg
 - Uso: runtime multimedia portable y compatibilidad de formatos.

@@ -88,7 +88,7 @@ def run_job(job_path: Path) -> int:
         progress(2, "PREPARANDO AUDIO...")
         prepared = AudioConversionService(AppPaths()).convert_to_mono_wav(audio, progress)
 
-        service = FileTranscriptionService()
+        service = FileTranscriptionService(str(job.get("performance_mode", "AUTO") or "AUTO"))
         segments, warning = service.transcribe(
             prepared,
             agent_label=job.get("speaker_one_label", "AGENTE"),

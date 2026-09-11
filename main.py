@@ -68,7 +68,7 @@ def _find_bundle_file(relative: str) -> Path:
 def _runtime_self_test() -> int:
     """Prueba real del contenido que se entregara al usuario.
 
-    AUDITOR IA 8.0.1 usa Faster-Whisper Small para ASR y SortFormer solo
+    AUDITOR IA 8.1.0 usa Faster-Whisper Small para ASR y SortFormer solo
     para diarización de archivos. El modo En vivo usa Faster-Whisper y WASAPI.
     """
     try:
@@ -78,6 +78,7 @@ def _runtime_self_test() -> int:
         import faster_whisper
         import numpy
         import sounddevice
+        import soundcard
         import pyaudiowpatch
         from faster_whisper import WhisperModel
 
@@ -86,6 +87,7 @@ def _runtime_self_test() -> int:
         nemo = _find_bundle_file("nemo-speech/bin/nemo-speech.exe")
         diar = _find_bundle_file("models/sortformer-v2-q8_0.gguf")
         whisper_dir = _find_bundle_file("models/small/model.bin").parent
+        whisper_base_dir = _find_bundle_file("models/base/model.bin").parent
 
         required = [
             ffmpeg,
@@ -95,6 +97,9 @@ def _runtime_self_test() -> int:
             whisper_dir / "model.bin",
             whisper_dir / "config.json",
             whisper_dir / "tokenizer.json",
+            whisper_base_dir / "model.bin",
+            whisper_base_dir / "config.json",
+            whisper_base_dir / "tokenizer.json",
         ]
         missing = [str(path) for path in required if not path.is_file()]
         if missing:
@@ -137,8 +142,10 @@ def _runtime_self_test() -> int:
             f"CTranslate2={ctranslate2.__version__}",
             "FasterWhisper=OK",
             "FasterWhisperSmall=OK",
+            "FasterWhisperBase=OK",
             "SoundDevice=OK",
-            "PyAudioWPatch=OK",
+            f"SoundCard={getattr(soundcard, '__version__', 'OK')}",
+            f"PyAudioWPatch={getattr(pyaudiowpatch, '__version__', 'OK')}",
             "NeMoSpeechDoctor=OK",
             "SortFormerGGUF=OK",
         ]

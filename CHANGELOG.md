@@ -1,21 +1,38 @@
-# Changelog
+# CHANGELOG
 
-## 8.0.1 STABLE
-- Reparado el bloqueo de transcripción de archivos causado por IPC basado en stdout y procesos nativos con pipes sin drenar.
-- Worker de archivos aislado con progreso/resultados JSON en LOCALAPPDATA.
-- Watchdog de proceso para evitar esperas indefinidas.
-- Faster-Whisper Small pasa a ser el ASR estable de archivos y En vivo.
-- SortFormer queda desacoplado del ASR: un fallo de diarización ya no elimina la transcripción.
-- SortFormer usa full-attention solo en audios cortos y modo streaming en llamadas largas.
-- Añadido timeout y prioridad reducida al proceso nativo de diarización.
-- Mejorada la clasificación AGENTE / CLIENTE con corrección contextual posterior a la separación acústica.
-- Reparado En vivo: las grabaciones ya no intentan escribirse dentro de Program Files.
-- Captura del cliente migrada a WASAPI loopback con PyAudioWPatch.
-- Captura y transcripción En vivo separadas en hilos independientes para evitar congelamientos.
-- Decodificación En vivo optimizada a baja latencia.
-- Workflow usa binario oficial NeMo-Speech.cpp v0.1.0 y aísla las dependencias del conversor para no alterar el entorno de la app.
-- PyInstaller incluye explícitamente runtime nativo de PyAudioWPatch/sounddevice.
-- Build valida el EXE empaquetado y el modo `--file-worker` antes de crear el Setup.
+## 8.1.0 UNIVERSAL
 
-## 8.0.0
-- Primera integración experimental de NeMo-Speech.cpp/SortFormer.
+### Arquitectura
+- Versión centralizada en `app/version.py`.
+- Perfil automático de hardware por CPU/RAM.
+- Faster-Whisper Base para ECO y Small para BALANCEADO/CALIDAD.
+- CPU como runtime base; no exige GPU.
+- Logging rotativo con límite de tamaño.
+
+### Audio
+- PyAudioWPatch/WASAPI como loopback principal.
+- SoundCard como fallback automático.
+- Micrófono mediante sounddevice.
+- Dispositivos persistidos por identificador lógico, no por marca fija.
+- Calibración de ruido al iniciar sesión.
+- Captura loopback por callback para que STOP no quede esperando audio del PC.
+- Cola de trabajos acotada para equipos lentos.
+- Cierre explícito de streams e hilos al detener y cerrar la aplicación.
+
+### Calidad En vivo
+- Firma acústica temporal/espectral para detectar eco del audio del PC en el micrófono.
+- Conserva CLIENTE como fuente autoritativa cuando existe duplicación.
+- Refuerzo de filtros contra CTAs/alucinaciones y repeticiones patológicas.
+- VAD y decodificación adaptados al perfil de hardware.
+
+### Interfaz
+- Scroll manual independiente mientras sigue llegando texto.
+- AUTO-SEGUIR persistente y opcional.
+- Ajustes de rendimiento y backend de audio.
+- Diagnóstico del equipo desde la aplicación.
+
+### Distribución
+- Modelos Base y Small incluidos.
+- PyAudioWPatch incluido en el instalador.
+- Workflow, PyInstaller, Inno Setup y Setup actualizados a 8.1.0.
+- Conserva AppId de 8.0 para actualizar instalaciones existentes.

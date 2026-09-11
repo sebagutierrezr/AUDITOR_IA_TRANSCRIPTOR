@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-Write-Host '=== AUDITOR IA 8.0.1 - BUILD RELEASE ESTABLE ==='
+Write-Host '=== AUDITOR IA 8.1.0 - BUILD RELEASE ESTABLE ==='
 
 # build_assets se conserva: fue generado y validado por el workflow.
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue build, dist, release
@@ -18,7 +18,10 @@ $requiredAssets = @(
     (Join-Path $assetRoot 'models\sortformer-v2-q8_0.gguf'),
     (Join-Path $assetRoot 'models\small\model.bin'),
     (Join-Path $assetRoot 'models\small\config.json'),
-    (Join-Path $assetRoot 'models\small\tokenizer.json')
+    (Join-Path $assetRoot 'models\small\tokenizer.json'),
+    (Join-Path $assetRoot 'models\base\model.bin'),
+    (Join-Path $assetRoot 'models\base\config.json'),
+    (Join-Path $assetRoot 'models\base\tokenizer.json')
 )
 
 foreach ($required in $requiredAssets) {
@@ -46,7 +49,7 @@ Write-Host 'Ejecutando PyInstaller...'
 python -m PyInstaller --noconfirm --clean AUDITOR_IA.spec
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller fallo.' }
 
-$distRoot = Join-Path $PSScriptRoot 'dist\AUDITOR_IA_8.0.1_BUILD'
+$distRoot = Join-Path $PSScriptRoot 'dist\AUDITOR_IA_8.1.0_BUILD'
 $appExe = Join-Path $distRoot 'AUDITOR_IA.exe'
 
 if (-not (Test-Path $appExe -PathType Leaf)) {
@@ -87,6 +90,9 @@ $requiredBundled = @(
     (Join-Path $bundleRoot 'models\small\model.bin'),
     (Join-Path $bundleRoot 'models\small\config.json'),
     (Join-Path $bundleRoot 'models\small\tokenizer.json'),
+    (Join-Path $bundleRoot 'models\base\model.bin'),
+    (Join-Path $bundleRoot 'models\base\config.json'),
+    (Join-Path $bundleRoot 'models\base\tokenizer.json'),
     (Join-Path $bundleRoot 'resources\logo.svg')
 )
 
@@ -166,9 +172,9 @@ Write-Host "Inno Setup: $iscc"
 & $iscc 'installer\AUDITOR_IA.iss'
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup fallo.' }
 
-$setup = Join-Path $PSScriptRoot 'release\AUDITOR_IA_8.0.1_Setup.exe'
+$setup = Join-Path $PSScriptRoot 'release\AUDITOR_IA_8.1.0_Setup.exe'
 if (-not (Test-Path $setup -PathType Leaf)) {
-    throw 'Inno Setup termino sin generar release\AUDITOR_IA_8.0.1_Setup.exe.'
+    throw 'Inno Setup termino sin generar release\AUDITOR_IA_8.1.0_Setup.exe.'
 }
 
 $setupSize = (Get-Item $setup).Length

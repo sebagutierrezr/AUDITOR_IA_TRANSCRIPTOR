@@ -11,6 +11,7 @@ datas = [
 
 for source, target in [
     ('build_assets/models/small', 'models/small'),
+    ('build_assets/models/base', 'models/base'),
     ('build_assets/models/sortformer-v2-q8_0.gguf', 'models'),
     ('build_assets/nemo-speech', 'nemo-speech'),
     ('build_assets/ffmpeg', 'ffmpeg'),
@@ -31,10 +32,9 @@ hiddenimports = [
     'psutil',
 ]
 
-# PyAudioWPatch contiene una extensión nativa; sounddevice incluye runtime de
-# PortAudio/cffi según la rueda. Collect_all evita que el EXE funcione en CI pero
-# pierda el backend de audio al instalarlo en otro PC.
-for package in ('pyaudiowpatch', 'sounddevice'):
+# Audio universal: PyAudioWPatch es el backend WASAPI principal; SoundCard
+# queda como fallback y sounddevice maneja el micrófono.
+for package in ('pyaudiowpatch', 'soundcard', 'sounddevice'):
     p_datas, p_binaries, p_hidden = collect_all(package)
     datas += p_datas
     binaries += p_binaries
@@ -57,7 +57,6 @@ a = Analysis(
         'pyannote',
         'speechbrain',
         'sklearn',
-        'soundcard',
     ],
     noarchive=False,
 )
@@ -86,5 +85,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='AUDITOR_IA_8.0.1_BUILD',
+    name='AUDITOR_IA_8.1.0_BUILD',
 )

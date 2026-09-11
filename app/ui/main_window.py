@@ -21,6 +21,7 @@ from app.ui.pages.live_page import LivePage
 from app.ui.pages.history_page import HistoryPage
 from app.ui.pages.settings_page import SettingsPage
 from app.ui.styles import APP_STYLE
+from app.version import APP_VERSION
 
 
 class MainWindow(QMainWindow):
@@ -32,7 +33,8 @@ class MainWindow(QMainWindow):
 
         self._config_service = config_service
         self._history_service = HistoryService()
-        self._engine = FasterWhisperEngine("ALTA")
+        initial_settings = self._config_service.load()
+        self._engine = FasterWhisperEngine("ALTA", initial_settings.performance_mode)
 
         self.setWindowTitle(
             "AUDITOR IA - TRANSCRIPTOR"
@@ -81,7 +83,7 @@ class MainWindow(QMainWindow):
         brand.setObjectName("BrandTitle")
 
         version = QLabel(
-            "TRANSCRIPTOR · 8.0.1"
+            f"TRANSCRIPTOR · {APP_VERSION}"
         )
         version.setObjectName("BrandVersion")
 
@@ -117,6 +119,9 @@ class MainWindow(QMainWindow):
         )
         self._settings_page.profile_changed.connect(
             self._engine.set_profile
+        )
+        self._settings_page.performance_changed.connect(
+            self._engine.set_performance_mode
         )
 
         self._status = QLabel("Listo")
@@ -201,3 +206,13 @@ class MainWindow(QMainWindow):
     def _set_status(self, message: str) -> None:
         clean = (message or "Listo").strip()
         self._status.setText(clean[:48])
+    def closeEvent(self, event) -> None:
+        try:
+            self._live_page.shutdown()
+        finally:
+            try:
+                self._engine.release()
+            except Exception:
+                pass
+        event.accept()
+

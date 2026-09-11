@@ -1,0 +1,4 @@
+git status
+git add -A
+git commit -m "AUDITOR IA 8.1.0 Universal arquitectura profesional"
+git push origin main

@@ -6,7 +6,8 @@ import numpy as np
 import sounddevice as sd
 from PySide6.QtCore import QObject, Signal, Slot
 
-from app.services.audio_device_service import AudioDeviceService
+from app.services.audio_capture_backend import LoopbackCaptureFactory
+from app.services.audio_device_service import OutputDevice
 
 
 class AudioTestWorker(QObject):
@@ -22,13 +23,24 @@ class AudioTestWorker(QObject):
         input_rate: int = 48000,
         output_id: str = "",
         output_name: str = "",
+        output_backend: str = "SOUNDCARD",
+        output_backend_index: int | None = None,
+        output_rate: int = 48000,
+        output_channels: int = 2,
     ) -> None:
         super().__init__()
         self.mode = mode
         self.input_index = input_index
         self.input_rate = input_rate
-        self.output_id = output_id
-        self.output_name = output_name
+        self.output_device = OutputDevice(
+            id=output_id,
+            raw_name=output_name,
+            display_name=output_name,
+            backend=output_backend,
+            backend_index=output_backend_index,
+            sample_rate=int(output_rate or 48000),
+            channels=max(1, int(output_channels or 1)),
+        )
 
     @Slot()
     def run(self) -> None:
@@ -71,37 +83,16 @@ class AudioTestWorker(QObject):
         )
 
     def test_client(self) -> None:
-        try:
-            import pyaudiowpatch as pyaudio
-        except Exception as exc:
-            raise RuntimeError("No se pudo cargar WASAPI loopback.") from exc
-
-        index = AudioDeviceService.loopback_index(self.output_id)
         maximum = 0.0
         started = time.monotonic()
-
-        with pyaudio.PyAudio() as manager:
-            info = manager.get_device_info_by_index(index)
-            rate = int(float(info.get("defaultSampleRate", 48000)))
-            channels = max(1, min(2, int(info.get("maxInputChannels", 2) or 2)))
-            block = max(1024, int(rate * 0.08))
-            with manager.open(
-                format=pyaudio.paInt16,
-                channels=channels,
-                rate=rate,
-                input=True,
-                input_device_index=index,
-                frames_per_buffer=block,
-            ) as stream:
-                while time.monotonic() - started < 3.0:
-                    raw = stream.read(block, exception_on_overflow=False)
-                    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-                    if channels > 1 and samples.size >= channels:
-                        samples = samples[: samples.size - (samples.size % channels)].reshape(-1, channels).mean(axis=1)
-                    peak = float(np.max(np.abs(samples))) if samples.size else 0.0
-                    maximum = max(maximum, peak)
-                    self.level_changed.emit(max(0, min(100, int(peak / 0.20 * 100))))
-
+        with LoopbackCaptureFactory.create(self.output_device) as reader:
+            while time.monotonic() - started < 3.0:
+                audio = reader.read(timeout=0.20)
+                if audio.size == 0:
+                    continue
+                peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+                maximum = max(maximum, peak)
+                self.level_changed.emit(max(0, min(100, int(peak / 0.20 * 100))))
         self.completed.emit(
             "Salida disponible, pero no se reprodujo audio durante la prueba."
             if maximum < 0.002

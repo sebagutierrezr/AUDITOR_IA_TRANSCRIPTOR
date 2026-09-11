@@ -1,35 +1,80 @@
-# AUDITOR IA - TRANSCRIPTOR 8.0.1 STABLE
+# AUDITOR IA - TRANSCRIPTOR 8.1.0 UNIVERSAL
 
-Aplicación de escritorio Windows para transcribir entrevistas telefónicas de forma local, sin API y sin pagos por uso.
+Aplicación de escritorio Windows para transcripción local de entrevistas, separación de hablantes y transcripción En vivo sin API ni servicios de pago.
 
-## Arquitectura 8.0.1
+## Objetivo de 8.1.0
 
-### Archivos
-- **Faster-Whisper Small (CTranslate2, CPU int8)** para transcripción y timestamps por palabra.
-- **NVIDIA SortFormer v2 / NeMo-Speech.cpp** exclusivamente para separación acústica de hablantes.
-- Clasificador contextual posterior para traducir los clusters acústicos a **AGENTE / CLIENTE**.
-- Si SortFormer falla o supera su tiempo máximo, la transcripción no se pierde: se entrega el texto con un respaldo contextual de roles.
-- El procesamiento pesado se ejecuta en un proceso separado y la interfaz permanece independiente.
-- La comunicación GUI/worker se hace mediante JSON en LOCALAPPDATA; no depende de stdout de un EXE PyInstaller sin consola.
-- El worker tiene prioridad reducida y un watchdog evita esperas indefinidas.
+8.1.0 deja de asumir un headset o un computador específico. La aplicación detecta el hardware y los dispositivos de audio en cada equipo y selecciona una configuración segura automáticamente.
 
-### En vivo
-- Micrófono del agente: `sounddevice`.
-- Audio del cliente: **WASAPI loopback** mediante `PyAudioWPatch`.
-- Captura y transcripción se ejecutan en hilos distintos.
-- Faster-Whisper se precarga sin bloquear la interfaz y usa decodificación de baja latencia para fragmentos en vivo.
-- Las grabaciones se guardan en `%LOCALAPPDATA%\\AUDITOR_IA_TRANSCRIPTOR\\recordings`, no en Program Files.
+### Compatibilidad objetivo
+
+- Windows 10/11 de 64 bits.
+- CPU x64 como requisito base; NVIDIA/CUDA no es obligatorio.
+- 6 GB RAM mínimo funcional; 8 GB o más recomendado.
+- Micrófonos USB, jack, integrados y dispositivos de audio compatibles con Windows.
+- Audio del cliente mediante WASAPI loopback.
+- PyAudioWPatch como backend de loopback principal y SoundCard como fallback.
+
+## En vivo
+
+- AGENTE: siempre proviene del micrófono seleccionado.
+- CLIENTE: siempre proviene del loopback de la salida de Windows seleccionada.
+- El backend y el dispositivo se resuelven dinámicamente; no hay nombres de hardware codificados.
+- Calibración inicial del ruido ambiente.
+- VAD adaptativo, filtro de silencio y control de alucinaciones.
+- Firma acústica no biométrica para detectar cuando el audio del PC se filtra por el micrófono y evitar duplicarlo como AGENTE.
+- Cola de audio acotada para evitar consumo ilimitado de memoria en PCs lentos.
+- STOP y reinicio de sesión cierran streams e hilos de captura.
+- Scroll manual durante la transcripción y auto-seguimiento opcional.
+
+## Adaptación al equipo
+
+Modo AUTO elige un perfil según CPU y RAM:
+
+- ECO: Faster-Whisper Base, pocos threads y baja latencia. Pensado para equipos limitados.
+- BALANCEADO: Faster-Whisper Small con carga moderada.
+- CALIDAD: Faster-Whisper Small con mayor búsqueda de decodificación.
+
+El usuario puede forzar ECO, BALANCEADO o CALIDAD en Ajustes.
+
+## Diagnóstico
+
+Ajustes incluye diagnóstico de:
+
+- Windows/arquitectura.
+- CPU y RAM.
+- carpetas de usuario con permisos de escritura.
+- Faster-Whisper.
+- SortFormer/NeMo-Speech.
+- FFmpeg.
+- micrófonos detectados.
+- salidas de Windows y backend loopback disponible.
+
+Los logs rotativos se guardan en `%LOCALAPPDATA%\AUDITOR_IA_TRANSCRIPTOR\logs`.
+
+## Datos de usuario
+
+La instalación es de solo lectura. Todo dato modificable se guarda bajo `%LOCALAPPDATA%\AUDITOR_IA_TRANSCRIPTOR`:
+
+- `config`: preferencias.
+- `recordings`: grabaciones En vivo.
+- `exports`: exportaciones.
+- `history/data`: historial.
+- `logs`: diagnóstico.
+- `temp`: temporales.
 
 ## Build
 
-El workflow `Build Windows Installer 8.0.1 STABLE`:
-1. instala dependencias Python de la app;
-2. incorpora FFmpeg Shared portable;
-3. descarga el binario oficial CPU de NeMo-Speech.cpp v0.1.0 para Windows x64;
-4. convierte SortFormer v2 Q8 en un entorno Python aislado;
-5. descarga Faster-Whisper Small;
-6. ejecuta tests y validación del runtime empaquetado;
-7. prueba explícitamente el modo `--file-worker` del EXE;
-8. genera `AUDITOR_IA_8.0.1_Setup.exe`.
+GitHub Actions construye un único instalador x64 e incluye:
 
-El instalador conserva el mismo AppId de 8.0.0 para actualizar la instalación existente.
+- Python runtime empaquetado con PyInstaller.
+- Faster-Whisper Base + Small.
+- FFmpeg Shared.
+- NeMo-Speech CPU + SortFormer.
+- PyAudioWPatch, SoundCard y sounddevice.
+
+El build ejecuta compileall, unit tests y una autoprueba del EXE empaquetado antes de crear el instalador.
+
+Salida:
+
+`AUDITOR_IA_8.1.0_Setup.exe`

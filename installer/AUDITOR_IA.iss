@@ -1,5 +1,5 @@
 #define MyAppName "AUDITOR IA - TRANSCRIPTOR"
-#define MyAppVersion "8.0.1"
+#define MyAppVersion "8.1.0"
 #define MyAppExeName "AUDITOR_IA.exe"
 
 [Setup]
@@ -9,8 +9,12 @@ AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\AUDITOR IA
 DefaultGroupName=AUDITOR IA
 OutputDir=..\release
-OutputBaseFilename=AUDITOR_IA_8.0.1_Setup
+OutputBaseFilename=AUDITOR_IA_8.1.0_Setup
 Compression=lzma2/ultra64
+WizardStyle=modern
+DisableProgramGroupPage=yes
+UninstallDisplayIcon={app}\{#MyAppExeName}
+AppPublisher=AUDITOR IA
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -20,7 +24,7 @@ CloseApplications=yes
 RestartApplications=no
 
 [Files]
-Source: "..\dist\AUDITOR_IA_8.0.1_BUILD\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\AUDITOR_IA_8.1.0_BUILD\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\AUDITOR IA"; Filename: "{app}\{#MyAppExeName}"

@@ -1,0 +1,11 @@
+AUDITOR IA 8.1.0 UNIVERSAL
+
+Esta versión cambia arquitectura, audio, modelos, workflow e instalador.
+NO mezclar archivos 8.0.x con 8.1.0.
+
+Opción recomendada:
+1. Usa el ZIP completo 8.1.0 como nueva carpeta de trabajo.
+2. Conserva la carpeta .git de tu clon actual o copia el contenido 8.1.0 sobre la raíz del repositorio.
+3. Ejecuta git add -A, commit y push.
+4. En GitHub Actions ejecuta una corrida NUEVA de "Build Windows Installer 8.1.0 STABLE".
+5. Descarga AUDITOR_IA_8.1.0_Setup.exe.

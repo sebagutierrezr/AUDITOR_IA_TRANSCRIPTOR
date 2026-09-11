@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -56,6 +56,7 @@ class LivePage(QFrame):
         self.original_profile = None
         self.paused = False
         self.last_speaker = ""
+        initial_settings = self.config.load()
 
         self.agent_target = 0
         self.client_target = 0
@@ -210,8 +211,8 @@ class LivePage(QFrame):
         self.agent_sensitivity = QSlider(Qt.Orientation.Horizontal)
         self.agent_sensitivity.setObjectName("V47SensitivitySlider")
         self.agent_sensitivity.setRange(0, 100)
-        self.agent_sensitivity.setValue(75)
-        self.agent_sensitivity_value = QLabel("75 %")
+        self.agent_sensitivity.setValue(initial_settings.live_agent_sensitivity)
+        self.agent_sensitivity_value = QLabel(f"{initial_settings.live_agent_sensitivity} %")
         self.agent_sensitivity_value.setObjectName("V47SensitivityValue")
         self.agent_sensitivity.valueChanged.connect(
             self.agent_sensitivity_changed
@@ -227,8 +228,8 @@ class LivePage(QFrame):
         self.client_sensitivity = QSlider(Qt.Orientation.Horizontal)
         self.client_sensitivity.setObjectName("V47SensitivitySlider")
         self.client_sensitivity.setRange(0, 100)
-        self.client_sensitivity.setValue(70)
-        self.client_sensitivity_value = QLabel("70 %")
+        self.client_sensitivity.setValue(initial_settings.live_client_sensitivity)
+        self.client_sensitivity_value = QLabel(f"{initial_settings.live_client_sensitivity} %")
         self.client_sensitivity_value.setObjectName("V47SensitivityValue")
         self.client_sensitivity.valueChanged.connect(
             self.client_sensitivity_changed
@@ -249,8 +250,8 @@ class LivePage(QFrame):
         self.noise_filter = QSlider(Qt.Orientation.Horizontal)
         self.noise_filter.setObjectName("V472NoiseSlider")
         self.noise_filter.setRange(0, 100)
-        self.noise_filter.setValue(35)
-        self.noise_filter_value = QLabel("35 %")
+        self.noise_filter.setValue(initial_settings.live_noise_filter)
+        self.noise_filter_value = QLabel(f"{initial_settings.live_noise_filter} %")
         self.noise_filter_value.setObjectName("V472NoiseValue")
         self.noise_filter.valueChanged.connect(self.noise_filter_changed)
 
@@ -329,6 +330,17 @@ class LivePage(QFrame):
         transcript_header.addLayout(transcript_title_box)
         transcript_header.addStretch(1)
 
+        self.follow_button = QPushButton("AUTO-SEGUIR: SÍ")
+        self.follow_button.setObjectName("V41InlineButton")
+        self.follow_button.setCheckable(True)
+        self.follow_button.setChecked(initial_settings.live_auto_follow)
+        self.follow_button.setToolTip(
+            "Activado: la vista baja automáticamente al texto más reciente. "
+            "Desactívalo para revisar texto anterior sin que la vista salte."
+        )
+        self.follow_button.toggled.connect(self.follow_live_changed)
+        transcript_header.addWidget(self.follow_button)
+
         self.expand_button = QPushButton("AMPLIAR TRANSCRIPCIÓN")
         self.expand_button.setObjectName("V471ExpandButton")
         self.expand_button.setCheckable(True)
@@ -349,11 +361,21 @@ class LivePage(QFrame):
 
         self.editor = QTextEdit()
         self.editor.setObjectName("V46LiveEditor")
-        self.editor.setMinimumHeight(560)
+        # Debe caber en el panel normal y seguir teniendo scroll propio.
+        # La versión anterior usaba 560 px mínimos y terminaba recortando
+        # controles en pantallas de 900 px de alto.
+        self.editor.setMinimumHeight(300)
+        self.editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.editor.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.editor.setPlaceholderText(
             "LA TRANSCRIPCIÓN APARECERÁ AQUÍ AL INICIAR LA SESIÓN."
         )
         self.editor.textChanged.connect(self.update_buttons)
+        self.editor.viewport().installEventFilter(self)
+        self.editor.installEventFilter(self)
+        self.editor.verticalScrollBar().sliderPressed.connect(
+            self.pause_live_follow_for_review
+        )
         transcript_box.addWidget(self.editor, 1)
 
         export_row = QHBoxLayout()
@@ -444,6 +466,7 @@ class LivePage(QFrame):
             if expanded
             else "AMPLIAR TRANSCRIPCIÓN"
         )
+        self.editor.setMinimumHeight(560 if expanded else 300)
 
     def refresh_labels(self):
         pass
@@ -454,19 +477,26 @@ class LivePage(QFrame):
         try:
             self.agent_combo.clear()
             self.client_combo.clear()
+            settings = self.config.load()
             inputs = AudioDeviceService.list_inputs()
-            outputs = AudioDeviceService.list_outputs()
+            outputs = AudioDeviceService.list_outputs(settings.audio_backend)
+            selected_input = AudioDeviceService.select_input(inputs, settings.preferred_input_uid)
+            selected_output = AudioDeviceService.select_output(outputs, settings.preferred_output_uid)
             for device in inputs:
                 label = device.display_name
                 if device.is_default:
                     label += "  ·  Predeterminado"
                 self.agent_combo.addItem(label, device.__dict__)
+                if selected_input and device.uid == selected_input.uid:
+                    self.agent_combo.setCurrentIndex(self.agent_combo.count() - 1)
 
             for device in outputs:
                 label = device.display_name
                 if device.is_default:
                     label += "  ·  Predeterminado"
                 self.client_combo.addItem(label, device.__dict__)
+                if selected_output and device.uid == selected_output.uid:
+                    self.client_combo.setCurrentIndex(self.client_combo.count() - 1)
             self.agent_status.setText("LISTO" if inputs else "NO DISPONIBLE")
             self.client_status.setText("LISTO" if outputs else "NO DISPONIBLE")
             self.agent_status.setObjectName("V41StatusOk" if inputs else "V41StatusError")
@@ -515,6 +545,10 @@ class LivePage(QFrame):
             input_rate=agent.get("sample_rate", 48000) if agent else 48000,
             output_id=client.get("id", "") if client else "",
             output_name=client.get("raw_name", "") if client else "",
+            output_backend=client.get("backend", "SOUNDCARD") if client else "SOUNDCARD",
+            output_backend_index=client.get("backend_index") if client else None,
+            output_rate=client.get("sample_rate", 48000) if client else 48000,
+            output_channels=client.get("channels", 2) if client else 2,
         )
         self.test_worker.moveToThread(self.test_thread)
         if mode == "agent":
@@ -554,20 +588,77 @@ class LivePage(QFrame):
 
         if self.worker is not None:
             self.worker.set_agent_sensitivity(value)
+        self._persist_live_preferences()
 
     def client_sensitivity_changed(self, value: int) -> None:
         self.client_sensitivity_value.setText(f"{value} %")
 
         if self.worker is not None:
             self.worker.set_client_sensitivity(value)
+        self._persist_live_preferences()
 
     def noise_filter_changed(self, value: int) -> None:
         self.noise_filter_value.setText(f"{value} %")
 
         if self.worker is not None:
             self.worker.set_noise_filter(value)
+        self._persist_live_preferences()
+
+    def _persist_live_preferences(self) -> None:
+        if not hasattr(self, "agent_sensitivity"):
+            return
+        settings = self.config.load()
+        settings.live_agent_sensitivity = self.agent_sensitivity.value()
+        settings.live_client_sensitivity = self.client_sensitivity.value()
+        settings.live_noise_filter = self.noise_filter.value()
+        if hasattr(self, "follow_button"):
+            settings.live_auto_follow = self.follow_button.isChecked()
+        agent = self.agent_combo.currentData() if hasattr(self, "agent_combo") else None
+        client = self.client_combo.currentData() if hasattr(self, "client_combo") else None
+        if agent:
+            settings.preferred_input_uid = str(agent.get("uid", "") or "")
+        if client:
+            settings.preferred_output_uid = str(client.get("id", "") or "")
+        try:
+            self.config.save(settings)
+        except Exception:
+            pass
+
+    def eventFilter(self, watched, event):
+        if hasattr(self, "editor") and watched in (self.editor, self.editor.viewport()):
+            if event.type() == QEvent.Type.Wheel:
+                self.pause_live_follow_for_review()
+            elif event.type() == QEvent.Type.KeyPress:
+                key = event.key()
+                if key in (
+                    Qt.Key.Key_Up,
+                    Qt.Key.Key_Down,
+                    Qt.Key.Key_PageUp,
+                    Qt.Key.Key_PageDown,
+                    Qt.Key.Key_Home,
+                ):
+                    self.pause_live_follow_for_review()
+        return super().eventFilter(watched, event)
+
+    def pause_live_follow_for_review(self) -> None:
+        # En cuanto el usuario mueve la rueda o toma la barra de scroll,
+        # dejamos de empujarlo al final. La transcripción sigue entrando.
+        if hasattr(self, "follow_button") and self.follow_button.isChecked():
+            self.follow_button.setChecked(False)
+
+    def follow_live_changed(self, enabled: bool) -> None:
+        self.follow_button.setText("AUTO-SEGUIR: SÍ" if enabled else "AUTO-SEGUIR: NO")
+        self._persist_live_preferences()
+        if enabled:
+            QTimer.singleShot(0, self.scroll_to_latest)
 
     def scroll_to_latest(self) -> None:
+        if hasattr(self, "follow_button") and not self.follow_button.isChecked():
+            return
+        cursor = self.editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.editor.setTextCursor(cursor)
+        self.editor.ensureCursorVisible()
         scrollbar = self.editor.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
@@ -593,6 +684,7 @@ class LivePage(QFrame):
             "LLAMADA_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".wav"
         )
         self.editor.clear()
+        self.follow_button.setChecked(settings.live_auto_follow)
         self.history_id = None
         self.time.setText("00:00")
         self.state.setText("INICIANDO")
@@ -602,6 +694,9 @@ class LivePage(QFrame):
         self.pause_btn.setText("PAUSAR")
         self.original_profile = self.engine.profile
         self.engine.set_profile("ALTA")
+        if hasattr(self.engine, "set_performance_mode"):
+            self.engine.set_performance_mode(settings.performance_mode)
+        self._persist_live_preferences()
 
         self.thread = QThread(self)
         self.worker = UnifiedAudioWorker(
@@ -613,6 +708,11 @@ class LivePage(QFrame):
             input_rate=agent.get("sample_rate", 48000) if agent else 48000,
             output_id=client.get("id", "") if client else "",
             output_name=client.get("raw_name", "") if client else "",
+            output_backend=client.get("backend", "SOUNDCARD") if client else "SOUNDCARD",
+            output_backend_index=client.get("backend_index") if client else None,
+            output_rate=client.get("sample_rate", 48000) if client else 48000,
+            output_channels=client.get("channels", 2) if client else 2,
+            performance_mode=settings.performance_mode,
             language=settings.language,
             uppercase=settings.uppercase,
             agent_label=settings.speaker_one_label,
@@ -733,10 +833,16 @@ class LivePage(QFrame):
             == settings.speaker_one_label.upper()
         )
 
-        cursor = self.editor.textCursor()
-        cursor.movePosition(
-            QTextCursor.MoveOperation.End
-        )
+        follow_live = self.follow_button.isChecked()
+        scrollbar = self.editor.verticalScrollBar()
+        previous_scroll = scrollbar.value()
+        previous_cursor = self.editor.textCursor()
+
+        # Insertar con un cursor del documento, no con el cursor visible del
+        # usuario. Así se puede leer texto antiguo mientras siguen llegando
+        # frases nuevas sin que la vista salte al final.
+        cursor = QTextCursor(self.editor.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
 
         if self.editor.toPlainText().strip():
             cursor.insertBlock()
@@ -793,14 +899,16 @@ class LivePage(QFrame):
             body_format,
         )
 
-        self.editor.setTextCursor(cursor)
-        self.editor.ensureCursorVisible()
         self.last_speaker = speaker
 
-        # Forzar seguimiento del último bloque después de que Qt actualice
-        # la altura del documento y la barra de desplazamiento.
-        QTimer.singleShot(0, self.scroll_to_latest)
-        QTimer.singleShot(60, self.scroll_to_latest)
+        if follow_live:
+            self.editor.setTextCursor(cursor)
+            QTimer.singleShot(0, self.scroll_to_latest)
+            QTimer.singleShot(80, self.scroll_to_latest)
+        else:
+            # Mantener exactamente la posición que estaba revisando el usuario.
+            self.editor.setTextCursor(previous_cursor)
+            scrollbar.setValue(previous_scroll)
 
     @staticmethod
     def format_time(seconds):
@@ -871,6 +979,23 @@ class LivePage(QFrame):
         self.state.setText("LISTO")
         self.sources_label.setText("LISTAS")
         self.update_buttons()
+
+
+    def shutdown(self, timeout_ms: int = 5000) -> None:
+        """Cierra streams e hilos antes de salir de la aplicación."""
+        if self.worker is not None:
+            try:
+                self.worker.stop()
+            except Exception:
+                pass
+        if self.test_thread is not None and self.test_thread.isRunning():
+            self.test_thread.requestInterruption()
+            self.test_thread.quit()
+            self.test_thread.wait(min(timeout_ms, 2500))
+        if self.thread is not None and self.thread.isRunning():
+            self.thread.requestInterruption()
+            self.thread.quit()
+            self.thread.wait(timeout_ms)
 
     def is_running(self):
         return bool(self.thread and self.thread.isRunning())
